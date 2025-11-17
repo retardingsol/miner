@@ -88,11 +88,18 @@ export const AutoMineInstruction = {
 } as const;
 
 /**
+ * Helper to convert string to Uint8Array (browser-compatible alternative to Buffer.from)
+ */
+function stringToUint8Array(str: string): Uint8Array {
+  return new TextEncoder().encode(str);
+}
+
+/**
  * Derive User Vault PDA
  */
 export function deriveUserVaultPDA(userPubkey: PublicKey, programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from('vault'), userPubkey.toBuffer()],
+    [stringToUint8Array('vault'), userPubkey.toBuffer()],
     programId
   );
 }
@@ -102,7 +109,7 @@ export function deriveUserVaultPDA(userPubkey: PublicKey, programId: PublicKey):
  */
 export function deriveUserConfigPDA(userPubkey: PublicKey, programId: PublicKey): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from('config'), userPubkey.toBuffer()],
+    [stringToUint8Array('config'), userPubkey.toBuffer()],
     programId
   );
 }
@@ -245,15 +252,14 @@ export function useAutoMine() {
   const { connection } = useConnection();
   const { publicKey, signTransaction } = useWallet();
 
-  if (!signTransaction) {
-    throw new Error('Wallet signTransaction not available');
-  }
+  // Don't throw error if wallet is not connected - just return functions that will check connection
+  // This allows the component to render when wallet is disconnected
 
   /**
    * Initialize user vault and config
    */
   const initUser = async (): Promise<string> => {
-    if (!publicKey) {
+    if (!publicKey || !signTransaction) {
       throw new Error('Wallet not connected');
     }
 
@@ -281,7 +287,7 @@ export function useAutoMine() {
    * Deposit SOL into vault
    */
   const deposit = async (amountSol: number): Promise<string> => {
-    if (!publicKey) {
+    if (!publicKey || !signTransaction) {
       throw new Error('Wallet not connected');
     }
 
@@ -309,7 +315,7 @@ export function useAutoMine() {
    * Withdraw SOL from vault
    */
   const withdraw = async (amountSol: number): Promise<string> => {
-    if (!publicKey) {
+    if (!publicKey || !signTransaction) {
       throw new Error('Wallet not connected');
     }
 
@@ -337,7 +343,7 @@ export function useAutoMine() {
    * Update automine configuration
    */
   const updateConfig = async (config: Partial<AutoMineConfig>): Promise<string> => {
-    if (!publicKey) {
+    if (!publicKey || !signTransaction) {
       throw new Error('Wallet not connected');
     }
 

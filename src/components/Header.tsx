@@ -1,56 +1,139 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import type { PriceSnapshot } from '../types/api';
-import { getHealth } from '../services/api';
 import { SolanaLogo } from './SolanaLogo';
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { WalletMenu } from './WalletMenu';
+import { LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { getWalletBalances } from '../services/api';
 
-type View = 'dashboard' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore';
+// Type declaration for window.solana
+declare global {
+  interface Window {
+    solana?: {
+      isPhantom?: boolean;
+      isSeeker?: boolean;
+      isSolflare?: boolean;
+      [key: string]: any;
+    };
+  }
+}
+
+type View = 'dashboard' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore';
+
+// Custom wallet connect button that shows "Connect" when disconnected
+function WalletConnectButtonCustom({ onWalletClick, onMobileWalletClick }: { onWalletClick?: () => void; onMobileWalletClick?: () => void }) {
+  const { connecting, connected, publicKey } = useWallet();
+  const { setVisible } = useWalletModal();
+
+  // Check if user is in a Solana-compatible browser or has wallet extension
+  const isSolanaBrowser = () => {
+    // Check if any Solana wallet provider is available
+    // This includes:
+    // - Phantom browser (window.solana.isPhantom)
+    // - Seeker mobile browser (window.solana.isSeeker)
+    // - Phantom extension in Chrome/Firefox (window.solana)
+    // - Other Solana wallet extensions
+    return typeof window !== 'undefined' && (
+      window.solana?.isPhantom ||
+      window.solana?.isSeeker ||
+      window.solana?.isSolflare ||
+      window.solana?.isCoinbaseWallet ||
+      window.solana?.isLedger ||
+      // Check for any Solana wallet provider object
+      (window.solana && typeof window.solana === 'object' && window.solana.isConnected !== undefined)
+    );
+  };
+
+  const handleClick = () => {
+    if (connected && publicKey) {
+      // On mobile, if onMobileWalletClick is provided, open mobile menu instead
+      if (onMobileWalletClick) {
+        onMobileWalletClick();
+      } else {
+        // Trigger custom event to open wallet menu (desktop)
+        window.dispatchEvent(new CustomEvent('openWalletMenu'));
+        if (onWalletClick) onWalletClick();
+      }
+    } else {
+      // Check if user is in a regular browser (not Solana-compatible)
+      if (!isSolanaBrowser()) {
+        alert('To connect your wallet, please open ore.monster in a Solana-compatible browser like Phantom or Seeker mobile.');
+        return;
+      }
+
+      // If onWalletClick is provided and user is not connected, still call it
+      // This allows mobile menu to handle the wallet modal opening
+      if (onWalletClick) {
+        onWalletClick();
+        // Small delay to allow menu to close before opening wallet modal
+        setTimeout(() => setVisible(true), 100);
+      } else {
+        setVisible(true);
+      }
+    }
+  };
+  
+  if (connected && publicKey) {
+    const address = publicKey.toBase58();
+    const truncatedAddress = `${address.slice(0, 4)}...${address.slice(-4)}`;
+    
+    return (
+      <button
+        onClick={handleClick}
+        className="bg-slate-800 border border-slate-500 text-white hover:bg-slate-700 rounded-full px-3 py-1.5 text-xs font-medium transition-colors"
+      >
+        {truncatedAddress}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={connecting}
+      className="bg-white text-black hover:bg-gray-100 rounded-full px-4 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {connecting ? 'Connecting...' : 'Connect'}
+    </button>
+  );
+}
 
 interface HeaderProps {
   solPrice: PriceSnapshot | null;
   orePrice: PriceSnapshot | null;
   currentView?: View;
+  walletMenuOpen?: boolean;
+  setWalletMenuOpen?: (open: boolean) => void;
 }
 
-interface HealthStatus {
-  overall: 'connected' | 'disconnected';
-  state: {
-    connected: boolean;
-    responseTime: number | null;
-    lastSuccess: Date | null;
-  };
-  bids: {
-    connected: boolean;
-    responseTime: number | null;
-    lastSuccess: Date | null;
-  };
-  lastUpdated: Date | null;
-}
-
-export function Header({ solPrice, orePrice, currentView = 'dashboard' }: HeaderProps) {
+export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMenuOpen: externalWalletMenuOpen, setWalletMenuOpen: setExternalWalletMenuOpen }: HeaderProps) {
   const location = useLocation();
-  const [healthStatus, setHealthStatus] = useState<HealthStatus>({
-    overall: 'disconnected',
-    state: { connected: false, responseTime: null, lastSuccess: null },
-    bids: { connected: false, responseTime: null, lastSuccess: null },
-    lastUpdated: null,
-  });
-  const [showHealthTooltip, setShowHealthTooltip] = useState(false);
+  const { publicKey, connected, disconnect } = useWallet();
+  const { connection } = useConnection();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showDonateTooltip, setShowDonateTooltip] = useState(false);
-  const [addressCopied, setAddressCopied] = useState(false);
   const [statsDropdownOpen, setStatsDropdownOpen] = useState(false);
   const [mobileStatsDropdownOpen, setMobileStatsDropdownOpen] = useState(false);
   const [stakingSubmenuOpen, setStakingSubmenuOpen] = useState(false);
   const [stakingSubmenuTimeout, setStakingSubmenuTimeout] = useState<number | null>(null);
   
-  const DONATE_ADDRESS = '3copeQ922WcSc5uqZbESgZ3TrfnEA8UEGHJ4EvkPAtHS';
+  // Wallet data for mobile menu
+  const [mobileSolBalance, setMobileSolBalance] = useState<number | null>(null);
+  const [mobileOreBalances, setMobileOreBalances] = useState<{
+    wallet: string;
+    staked: string;
+    refined: string;
+    unrefined: string;
+    total: string;
+  } | null>(null);
+  const [mobileWalletLoading, setMobileWalletLoading] = useState(true);
 
   // Determine current view from location if not provided
   const getCurrentView = (): View => {
     if (currentView) return currentView;
     const path = location.pathname;
+    if (path === '/about') return 'about';
     if (path === '/treasury') return 'treasury';
     if (path === '/inflation') return 'inflation';
     if (path === '/token') return 'token';
@@ -68,133 +151,120 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
 
   const activeView = getCurrentView();
 
-  const handleCopyAddress = async () => {
-    try {
-      await navigator.clipboard.writeText(DONATE_ADDRESS);
-      setAddressCopied(true);
-      setTimeout(() => {
-        setAddressCopied(false);
-        setShowDonateTooltip(false);
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to copy address:', err);
-      // Fallback: select the text
-      const textArea = document.createElement('textarea');
-      textArea.value = DONATE_ADDRESS;
-      document.body.appendChild(textArea);
-      textArea.select();
-      try {
-        document.execCommand('copy');
-        setAddressCopied(true);
-        setTimeout(() => {
-          setAddressCopied(false);
-          setShowDonateTooltip(false);
-        }, 2000);
-      } catch (fallbackErr) {
-        console.error('Fallback copy failed:', fallbackErr);
-      }
-      document.body.removeChild(textArea);
-    }
-  };
+  // Manage wallet menu state - use external state if provided, otherwise use internal state
+  const [internalWalletMenuOpen, setInternalWalletMenuOpen] = useState(false);
+  const walletMenuOpen = externalWalletMenuOpen !== undefined ? externalWalletMenuOpen : internalWalletMenuOpen;
+  const setWalletMenuOpen = setExternalWalletMenuOpen || setInternalWalletMenuOpen;
 
   useEffect(() => {
-    const checkHealth = async () => {
-      const startTime = performance.now();
-      try {
-        const health = await getHealth();
-        // Response time calculated but not used in current implementation
-        void ((performance.now() - startTime) / 1000).toFixed(2);
-        
-        // Check /state endpoint
-        const stateStart = performance.now();
-        try {
-          const stateResponse = await fetch('https://ore-api.gmore.fun/state');
-          const stateTime = ((performance.now() - stateStart) / 1000).toFixed(2);
-          if (stateResponse.ok) {
-            setHealthStatus(prev => ({
-              ...prev,
-              state: {
-                connected: true,
-                responseTime: parseFloat(stateTime),
-                lastSuccess: new Date(),
-              },
-            }));
-          }
-        } catch (e) {
-          // State check failed
-        }
-
-        // Check /bids endpoint
-        const bidsStart = performance.now();
-        try {
-          const bidsResponse = await fetch('https://ore-api.gmore.fun/bids');
-          const bidsTime = ((performance.now() - bidsStart) / 1000).toFixed(2);
-          if (bidsResponse.ok) {
-            setHealthStatus(prev => ({
-              ...prev,
-              bids: {
-                connected: true,
-                responseTime: parseFloat(bidsTime),
-                lastSuccess: new Date(),
-              },
-            }));
-          }
-        } catch (e) {
-          // Bids check failed
-        }
-
-        const overallConnected = health.hasTreasurySnapshot && health.hasRoundSnapshot;
-        setHealthStatus(prev => ({
-          ...prev,
-          overall: overallConnected ? 'connected' : 'disconnected',
-          lastUpdated: new Date(),
-        }));
-      } catch (error) {
-        setHealthStatus(prev => ({
-          ...prev,
-          overall: 'disconnected',
-        }));
-      }
+    const handleWalletClick = () => {
+      setWalletMenuOpen(true);
     };
+    
+    window.addEventListener('openWalletMenu', handleWalletClick);
+    return () => window.removeEventListener('openWalletMenu', handleWalletClick);
+  }, [setWalletMenuOpen]);
 
-    // Initial check
-    checkHealth();
+  // Fetch wallet data for mobile menu when it opens and wallet is connected
+  useEffect(() => {
+    if (mobileMenuOpen && connected && publicKey) {
+      setMobileWalletLoading(true);
+      const address = publicKey.toBase58();
+      
+      // Fetch SOL balance
+      connection.getBalance(publicKey)
+        .then((balance) => {
+          setMobileSolBalance(balance / LAMPORTS_PER_SOL);
+          setMobileWalletLoading(false);
+        })
+        .catch(() => {
+          setMobileSolBalance(null);
+        });
+      
+      // Fetch ORE balances
+      getWalletBalances(address)
+        .then((oreData) => {
+          setMobileOreBalances({
+            wallet: oreData.wallet || '0',
+            staked: oreData.staked || '0',
+            refined: oreData.refined || '0',
+            unrefined: oreData.unrefined || '0',
+            total: oreData.total || '0',
+          });
+        })
+        .catch(() => {
+          setMobileOreBalances({
+            wallet: '0',
+            staked: '0',
+            refined: '0',
+            unrefined: '0',
+            total: '0',
+          });
+        });
+    } else if (!mobileMenuOpen) {
+      // Reset when menu closes
+      setMobileSolBalance(null);
+      setMobileOreBalances(null);
+    }
+  }, [mobileMenuOpen, connected, publicKey, connection]);
 
-    // Check every 10 seconds
-    const interval = setInterval(checkHealth, 10000);
-    return () => clearInterval(interval);
-  }, []);
+  // Helper functions for mobile menu
+  const formatOreBalance = (balance: string | null | undefined) => {
+    if (!balance || balance === '0' || balance === '') return '0';
+    const num = parseFloat(balance);
+    if (isNaN(num)) return '0';
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 });
+  };
 
-  const formatTimeAgo = (date: Date | null) => {
-    if (!date) return 'Never';
-    const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
-    if (seconds < 60) return 'Just now';
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    return `${hours}h ago`;
+  const calculateTotalOre = () => {
+    if (!mobileOreBalances) return '0';
+    const unrefined = parseFloat(mobileOreBalances.unrefined) || 0;
+    const refined = parseFloat(mobileOreBalances.refined) || 0;
+    const staked = parseFloat(mobileOreBalances.staked) || 0;
+    const unrefinedAfterFee = unrefined * 0.9;
+    return (unrefinedAfterFee + refined + staked).toFixed(5);
+  };
+
+  const calculatePortfolioValue = () => {
+    const solValue = (mobileSolBalance && solPrice) ? mobileSolBalance * parseFloat(solPrice.priceUsdRaw) : 0;
+    const totalOreNum = parseFloat(calculateTotalOre()) || 0;
+    const oreValue = orePrice ? totalOreNum * parseFloat(orePrice.priceUsdRaw) : 0;
+    return solValue + oreValue;
   };
 
   return (
     <header className="bg-black border-b border-slate-700 sticky top-0 z-50 min-h-[65px] flex items-center shrink-0">
       <div className="max-w-7xl mx-auto px-4 py-3 w-full flex items-center justify-between min-h-[65px]">
             {/* Logo and Navigation - left */}
-            <div className="flex items-center gap-4 lg:gap-8 min-w-0 flex-shrink-0">
+            <div className="flex items-center gap-2 sm:gap-4 lg:gap-8 min-w-0 flex-shrink-0">
               <Link
                 to="/"
                 className="hover:opacity-80 transition-opacity flex-shrink-0"
               >
-                <div className="bg-white/20 backdrop-blur-sm rounded-lg px-2 py-1.5">
+                <div className="bg-white/20 backdrop-blur-sm rounded-lg px-1.5 sm:px-2 py-1.5">
                   <img 
                     src="/oreguidelogo.png" 
                     alt="ORE Guide" 
-                    className="h-10 w-auto object-contain cursor-pointer flex-shrink-0"
+                    className="h-8 sm:h-10 w-auto object-contain cursor-pointer flex-shrink-0"
                   />
                 </div>
               </Link>
               
               {/* Desktop Navigation */}
               <nav className="hidden lg:flex items-center gap-2">
+              <Link
+                to="/about"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                  activeView === 'about'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                About
+              </Link>
               <Link
                 to="/my-profile"
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
@@ -450,17 +520,17 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
         </div>
 
         {/* Prices and Health - right */}
-        <div className="flex items-center gap-2 sm:gap-3 lg:gap-6 flex-shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-3 lg:gap-6 flex-shrink-0 ml-2 sm:ml-0">
           {/* Solana Price */}
           {solPrice && (
             <a
               href="https://jup.ag/tokens/So11111111111111111111111111111111111111112"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 sm:gap-2 hover:opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+              className="flex items-center gap-1 sm:gap-2 hover:opacity-80 transition-opacity cursor-pointer flex-shrink-0"
             >
-              <SolanaLogo width={20} className="sm:w-6" />
-              <span className="text-slate-200 font-medium whitespace-nowrap text-sm sm:text-base">
+              <SolanaLogo width={16} height={16} className="sm:w-6 sm:h-6" />
+              <span className="text-slate-200 font-medium whitespace-nowrap text-xs sm:text-base">
                 ${parseFloat(solPrice.priceUsdRaw).toFixed(2)}
               </span>
             </a>
@@ -472,18 +542,23 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
               href="https://jup.ag/tokens/oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 sm:gap-2 hover:opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+              className="flex items-center gap-1 sm:gap-2 hover:opacity-80 transition-opacity cursor-pointer flex-shrink-0"
             >
               <img 
                 src="/orelogo.jpg" 
                 alt="ORE" 
-                className="w-4 h-4 sm:w-5 sm:h-5 object-contain rounded flex-shrink-0"
+                className="w-3.5 h-3.5 sm:w-5 sm:h-5 object-contain rounded flex-shrink-0"
               />
-              <span className="text-slate-200 font-medium whitespace-nowrap text-sm sm:text-base">
+              <span className="text-slate-200 font-medium whitespace-nowrap text-xs sm:text-base">
                 ${parseFloat(orePrice.priceUsdRaw).toFixed(2)}
               </span>
             </a>
           )}
+
+          {/* Mobile Connect Button - Next to prices */}
+          <div className="sm:hidden">
+            <WalletConnectButtonCustom onMobileWalletClick={() => setMobileMenuOpen(true)} />
+          </div>
 
           {/* Mobile Menu Button */}
           <button
@@ -514,152 +589,10 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
             </svg>
           </a>
 
-          {/* Wallet connect (Phantom) */}
+          {/* Wallet connect (Phantom) - Desktop only */}
           <div className="hidden sm:block">
-            <WalletMultiButton className="!bg-slate-800 !border !border-slate-600 !text-slate-100 hover:!bg-slate-700 !rounded-lg !px-3 !py-1.5 !text-xs" />
-          </div>
-
-          {/* Donate Button */}
-          <div
-            className="relative hidden sm:block"
-            onMouseEnter={() => !addressCopied && setShowDonateTooltip(true)}
-            onMouseLeave={() => !addressCopied && setShowDonateTooltip(false)}
-          >
-            <button
-              onClick={handleCopyAddress}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-pink-400 hover:text-pink-300 hover:bg-pink-500/10 transition-colors border border-pink-500/30 hover:border-pink-500/50"
-              aria-label="Donate"
-            >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
-              </svg>
-              <span className="text-xs">donate</span>
-            </button>
-
-            {/* Donate Tooltip */}
-            {(showDonateTooltip || addressCopied) && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-4 z-50">
-                <div className="flex items-center gap-2 mb-3">
-                  <svg className="w-5 h-5 text-pink-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
-                  </svg>
-                      <h3 className="text-sm font-semibold text-slate-300">
-                        Donate to ORE Builders
-                      </h3>
-                </div>
-                {addressCopied ? (
-                  <div className="text-center py-2">
-                    <p className="text-sm font-medium text-green-400 mb-2">
-                      ✓ Address copied to clipboard!
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      All donations go directly to supporting builders in the ORE ecosystem.
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-xs text-slate-400 mb-3">
-                      All donations go directly to supporting builders in the ORE ecosystem. Click to copy the address.
-                    </p>
-                    <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-600">
-                      <p className="text-xs text-slate-400 mb-1">SOL Address:</p>
-                      <p className="text-sm font-mono text-pink-400 break-all select-all">
-                        {DONATE_ADDRESS}
-                      </p>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-3 text-center">
-                      Click the button to copy
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Health Endpoint Indicator */}
-          <div
-            className="relative hidden sm:block"
-            onMouseEnter={() => setShowHealthTooltip(true)}
-            onMouseLeave={() => setShowHealthTooltip(false)}
-          >
-            <div className="w-8 h-8 rounded border-2 border-blue-500 flex items-center justify-center cursor-pointer hover:border-blue-400 transition-colors">
-              <div className={`w-4 h-4 rounded-full ${
-                healthStatus.overall === 'connected' ? 'bg-blue-500' : 'bg-red-500'
-              }`}></div>
-            </div>
-
-            {/* Health Status Tooltip */}
-            {showHealthTooltip && (
-              <div className="absolute right-0 top-full mt-2 w-64 bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-4 z-50">
-                <h3 className="text-sm font-semibold text-slate-300 mb-4 text-center">
-                  CONNECTION STATUS
-                </h3>
-
-                {/* Overall Status */}
-                <div className="flex justify-between items-center mb-3 pb-3 border-b border-slate-700">
-                  <span className="text-xs text-slate-400">Overall:</span>
-                  <span className={`text-xs font-medium ${
-                    healthStatus.overall === 'connected' ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {healthStatus.overall === 'connected' ? 'Connected' : 'Disconnected'}
-                  </span>
-                </div>
-
-                {/* /state Service */}
-                <div className="mb-3 pb-3 border-b border-slate-700">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs text-slate-400">/state:</span>
-                    <span className={`text-xs font-medium ${
-                      healthStatus.state.connected ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {healthStatus.state.connected ? 'Connected' : 'Disconnected'}
-                    </span>
-                  </div>
-                  {healthStatus.state.connected && (
-                    <>
-                      <div className="flex justify-between items-center text-xs text-slate-500">
-                        <span>Response:</span>
-                        <span>{healthStatus.state.responseTime?.toFixed(2)}s</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs text-slate-500">
-                        <span>Last success:</span>
-                        <span>{formatTimeAgo(healthStatus.state.lastSuccess)}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* /bids Service */}
-                <div className="mb-3 pb-3 border-b border-slate-700">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs text-slate-400">/bids:</span>
-                    <span className={`text-xs font-medium ${
-                      healthStatus.bids.connected ? 'text-green-400' : 'text-red-400'
-                    }`}>
-                      {healthStatus.bids.connected ? 'Connected' : 'Disconnected'}
-                    </span>
-                  </div>
-                  {healthStatus.bids.connected && (
-                    <>
-                      <div className="flex justify-between items-center text-xs text-slate-500">
-                        <span>Response:</span>
-                        <span>{healthStatus.bids.responseTime?.toFixed(2)}s</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs text-slate-500">
-                        <span>Last success:</span>
-                        <span>{formatTimeAgo(healthStatus.bids.lastSuccess)}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                {/* Last Updated */}
-                <div className="flex justify-between items-center text-xs text-slate-500">
-                  <span>Last updated:</span>
-                  <span>{formatTimeAgo(healthStatus.lastUpdated)}</span>
-                </div>
-              </div>
-            )}
+            <WalletConnectButtonCustom />
+            {walletMenuOpen && <WalletMenu isOpen={walletMenuOpen} onClose={() => setWalletMenuOpen(false)} solPrice={solPrice} orePrice={orePrice} />}
           </div>
         </div>
       </div>
@@ -698,8 +631,127 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                 </button>
               </div>
 
+              {/* Wallet Section - Always show, with scaffolding when not connected */}
+              <div className="px-4 pt-4 pb-4 border-b border-slate-700">
+                {connected && publicKey ? (
+                  <>
+                    {/* Wallet Profile Section - Connected */}
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3 flex-1">
+                        <div className="w-10 h-10 rounded-full bg-white border-2 border-slate-400 flex items-center justify-center flex-shrink-0">
+                          <svg className="w-6 h-6 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" />
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <button
+                            onClick={() => {
+                              setMobileMenuOpen(false);
+                              setWalletMenuOpen(true);
+                            }}
+                            className="text-left w-full"
+                          >
+                            <p className="text-sm font-medium text-slate-200 truncate">{publicKey.toBase58().slice(0, 4)}...{publicKey.toBase58().slice(-4)}</p>
+                            <p className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+                              View Full Wallet
+                            </p>
+                          </button>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          disconnect();
+                          setMobileMenuOpen(false);
+                        }}
+                        className="text-xs text-red-400 hover:text-red-300 transition-colors ml-2 flex-shrink-0"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+
+                    {/* Portfolio Value */}
+                    {solPrice && orePrice && (
+                      <div className="mb-3 p-3 bg-slate-800/50 border border-slate-600 rounded-lg">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-xs text-slate-400">Portfolio Value</span>
+                          <span className="text-base font-semibold text-white">
+                            ${mobileWalletLoading ? '...' : calculatePortfolioValue().toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-1.5">
+                            <SolanaLogo width={14} height={14} />
+                            <span className="text-slate-500">SOL</span>
+                          </div>
+                          <span className="text-slate-300">
+                            {mobileWalletLoading || mobileSolBalance === null ? '...' : mobileSolBalance.toFixed(4)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs mt-1">
+                          <div className="flex items-center gap-1.5">
+                            <img src="/orelogo.jpg" alt="ORE" className="w-3.5 h-3.5 object-contain rounded" />
+                            <span className="text-slate-500">ORE</span>
+                          </div>
+                          <span className="text-slate-300">
+                            {mobileWalletLoading || !mobileOreBalances ? '...' : formatOreBalance(calculateTotalOre())}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Quick Balances */}
+                    {mobileOreBalances && (
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-slate-800/50 border border-slate-600 rounded p-2">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <img src="/orelogo.jpg" alt="ORE" className="w-3 h-3 object-contain rounded" />
+                            <p className="text-slate-500">Wallet ORE</p>
+                          </div>
+                          <p className="text-white font-medium">{formatOreBalance(mobileOreBalances.wallet)}</p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-600 rounded p-2">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <img src="/orelogo.jpg" alt="ORE" className="w-3 h-3 object-contain rounded" />
+                            <p className="text-slate-500">Staked ORE</p>
+                          </div>
+                          <p className="text-white font-medium">{formatOreBalance(mobileOreBalances.staked)}</p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {/* Connect Prompt - Centered */}
+                    <div className="text-center">
+                      <p className="text-xs text-slate-400 mb-3">
+                        Connect your wallet to view your portfolio and balances
+                      </p>
+                      <div className="flex justify-center">
+                        <WalletConnectButtonCustom onWalletClick={() => {
+                          // Mobile menu stays open, wallet modal opens
+                        }} />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
               {/* Menu Items */}
               <nav className="flex-1 overflow-y-auto p-4 space-y-2">
+                <Link
+                  to="/about"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center gap-3 ${
+                    activeView === 'about'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  About
+                </Link>
                 <Link
                   to="/my-profile"
                   onClick={() => setMobileMenuOpen(false)}
@@ -888,8 +940,8 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                 </div>
               </nav>
 
-              {/* X/Twitter Link and Donate Button in Mobile Menu */}
-              <div className="px-4 pb-4 border-t border-slate-700 pt-4 space-y-2">
+              {/* X/Twitter Link in Mobile Menu */}
+              <div className="px-4 pb-4 border-t border-slate-700 pt-4">
                 <a
                   href="https://x.com/oredotmonster"
                   target="_blank"
@@ -901,20 +953,27 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                   </svg>
                   <span>Follow on X</span>
                 </a>
-                <button
-                  onClick={handleCopyAddress}
-                  className="w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center gap-3 text-pink-400 hover:text-pink-300 hover:bg-pink-500/10 border border-pink-500/30"
-                >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
-                  </svg>
-                  <span>{addressCopied ? 'Address Copied!' : 'Donate'}</span>
-                </button>
               </div>
 
             </div>
           </div>
       </>
+
+      {/* Wallet Menu - Works on both desktop and mobile */}
+      {walletMenuOpen && (
+        <WalletMenu 
+          isOpen={walletMenuOpen} 
+          onClose={() => {
+            setWalletMenuOpen(false);
+            // Also close mobile menu if it was open
+            if (mobileMenuOpen) {
+              setMobileMenuOpen(false);
+            }
+          }} 
+          solPrice={solPrice} 
+          orePrice={orePrice} 
+        />
+      )}
     </header>
   );
 }

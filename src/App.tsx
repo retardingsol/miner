@@ -10,11 +10,12 @@ import { StrategiesSoVView } from './components/StrategiesSoVView';
 import { MyProfileView } from './components/MyProfileView';
 import { MartingaleSimulationView } from './components/MartingaleSimulationView';
 import { WhatIsOreView } from './components/WhatIsOreView';
+import { AboutView } from './components/AboutView';
 
 const POLL_INTERVAL = 5000; // 5 seconds for main data
 const GRID_POLL_INTERVAL = 1000; // 1 second for grid updates
 
-type View = 'dashboard' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore';
+type View = 'dashboard' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore';
 
 // Main content component that uses routing
 function AppContent() {
@@ -23,6 +24,7 @@ function AppContent() {
   const [bids, setBids] = useState<BidsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -105,6 +107,7 @@ function AppContent() {
   // Determine current view from location
   const getCurrentView = (): View => {
     const path = location.pathname;
+    if (path === '/about') return 'about';
     if (path === '/treasury') return 'treasury';
     if (path === '/inflation') return 'inflation';
     if (path === '/token') return 'token';
@@ -120,6 +123,16 @@ function AppContent() {
   };
 
   const currentView = getCurrentView();
+
+  // Listen for wallet menu open event
+  useEffect(() => {
+    const handleWalletClick = () => {
+      setWalletMenuOpen(true);
+    };
+    
+    window.addEventListener('openWalletMenu', handleWalletClick);
+    return () => window.removeEventListener('openWalletMenu', handleWalletClick);
+  }, []);
 
   if (loading && !state) {
     return (
@@ -138,9 +151,12 @@ function AppContent() {
         solPrice={state?.solPrice || null}
         orePrice={state?.orePrice || null}
         currentView={currentView}
+        walletMenuOpen={walletMenuOpen}
+        setWalletMenuOpen={setWalletMenuOpen}
       />
-      <main className="bg-black">
+      <main className={`bg-black transition-all duration-700 ease-in-out ${walletMenuOpen ? 'blur-sm' : ''}`}>
         <Routes>
+          <Route path="/about" element={<AboutView />} />
           <Route path="/treasury" element={<TreasuryView currentView="treasury" />} />
           <Route path="/inflation" element={<TreasuryView currentView="inflation" />} />
           <Route path="/token" element={<TreasuryView currentView="token" />} />

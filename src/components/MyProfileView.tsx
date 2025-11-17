@@ -1,11 +1,36 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { getMinerStats, getWalletBalance, getLeaderboard, getMinerHistory, getTokenCurrent, getProfileData, getWalletBalances, getOreLeaders } from '../services/api';
 import { SolanaLogo } from './SolanaLogo';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 const LAMPORTS_PER_SOL = 1e9;
 const ORE_CONVERSION_FACTOR = 1e11;
+
+// Loading indicator component - defined outside with memo to prevent re-creation on re-renders
+const LoadingIndicator = memo(({ className = "" }: { className?: string }) => (
+  <div className={`flex items-center gap-2 ${className}`}>
+    <div 
+      className="rounded-full h-4 w-4 border-b-2 border-slate-400"
+      style={{
+        animation: 'spin 1s linear infinite',
+        willChange: 'transform',
+        animationFillMode: 'both'
+      }}
+    ></div>
+    <div 
+      className="bg-slate-700 h-6 w-20 rounded"
+      style={{
+        animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        willChange: 'opacity',
+        animationFillMode: 'both'
+      }}
+    ></div>
+  </div>
+));
+
+LoadingIndicator.displayName = 'LoadingIndicator';
 
 interface MinerStats {
   authority: string;
@@ -44,8 +69,8 @@ interface HistoryDataPoint {
 }
 
 export function MyProfileView() {
-  const { publicKey, connected } = useWallet();
-  const [walletAddress, setWalletAddress] = useState('');
+  const { publicKey, connected, connecting } = useWallet();
+  const { setVisible } = useWalletModal();
   const [minerStats, setMinerStats] = useState<MinerStats | null>(null);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry | null>(null);
   const [oreLeaderboard, setOreLeaderboard] = useState<Array<{ authority: string; rewards_ore: number }>>([]);
@@ -58,8 +83,16 @@ export function MyProfileView() {
   const [orePrice, setOrePrice] = useState<number | null>(null);
   const [profileData, setProfileData] = useState<any>(null);
   const [walletBalances, setWalletBalances] = useState<any>(null);
-  const [savedProfile, setSavedProfile] = useState<string | null>(null);
-  const [autoLoadedFromWallet, setAutoLoadedFromWallet] = useState(false);
+  const [profileDataLoading, setProfileDataLoading] = useState(false);
+  const [minerStatsLoading, setMinerStatsLoading] = useState(false);
+  const [leaderboardDataLoading, setLeaderboardDataLoading] = useState(false);
+  const [oreLeaderboardLoading, setOreLeaderboardLoading] = useState(false);
+  const [pricesLoading, setPricesLoading] = useState(true);
+
+  // Helper to check if leaderboard rank is loading
+  const isLeaderboardRankLoading = () => {
+    return oreLeaderboardLoading || (loading && oreLeaderboard.length === 0);
+  };
 
   const formatOre = (ore: number) => {
     const converted = ore / ORE_CONVERSION_FACTOR;
@@ -70,7 +103,7 @@ export function MyProfileView() {
     return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
-  // Helper function to perform wallet search (memoized to avoid dependency issues)
+  // Helper function to perform wallet search (progressive loading - fast display)
   const performWalletSearch = useCallback(async (address: string) => {
     setLoading(true);
     setError(null);
@@ -82,106 +115,145 @@ export function MyProfileView() {
     setProfileData(null);
     setWalletBalances(null);
     setShowGraph(false);
+    setProfileDataLoading(false);
+    setMinerStatsLoading(false);
+    setLeaderboardDataLoading(false);
+    setOreLeaderboardLoading(false);
 
-    try {
-      const trimmedAddress = address.trim();
-      const [stats, balance, history, profile, balances] = await Promise.allSettled([
-        getMinerStats(trimmedAddress),
-        getWalletBalance(trimmedAddress),
-        getMinerHistory(trimmedAddress),
-        getProfileData(trimmedAddress),
-        getWalletBalances(trimmedAddress),
-      ]);
-      
-      // Extract values from Promise.allSettled results
-      const minerStatsResult = stats.status === 'fulfilled' ? stats.value : null;
-      const walletBalanceResult = balance.status === 'fulfilled' ? balance.value : null;
-      const historyResult = history.status === 'fulfilled' ? history.value : [];
-      const profileResult = profile.status === 'fulfilled' ? profile.value : null;
-      const balancesResult = balances.status === 'fulfilled' ? balances.value : null;
+    const trimmedAddress = address.trim();
+    let hasReceivedData = false;
 
-      // Log any failures for debugging
-      if (stats.status === 'rejected') {
-        console.error('Failed to fetch miner stats:', stats.reason);
+    // Helper to stop loading once we have critical data
+    const stopLoadingIfDataReceived = () => {
+      if (!hasReceivedData) {
+        hasReceivedData = true;
+        setLoading(false);
       }
-      if (balance.status === 'rejected') {
-        console.error('Failed to fetch wallet balance:', balance.reason);
-      }
-      if (history.status === 'rejected') {
-        console.error('Failed to fetch miner history:', history.reason);
-      }
-      if (profile.status === 'rejected') {
-        console.error('Failed to fetch profile data:', profile.reason);
-        console.error('Profile error details:', profile.reason?.message || profile.reason);
-      }
-      if (balances.status === 'rejected') {
-        console.error('Failed to fetch wallet balances:', balances.reason);
-      }
-      
-      setMinerStats(minerStatsResult);
-      setWalletBalance(walletBalanceResult);
-      setHistoryData(historyResult);
-      setProfileData(profileResult);
-      setWalletBalances(balancesResult);
+    };
 
-      // Save wallet address to localStorage for future visits
-      localStorage.setItem('ore-profile-wallet', trimmedAddress);
+    // Fetch wallet balances first (fast, most visible)
+    getWalletBalances(trimmedAddress)
+      .then((result) => {
+        setWalletBalances(result);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch wallet balances:', err);
+      });
 
-      // Fetch leaderboard data to get rounds_played and rounds_won (fallback)
-      try {
-        const leaderboard = await getLeaderboard();
+    // Fetch profile data (core stats)
+    setProfileDataLoading(true);
+    getProfileData(trimmedAddress)
+      .then((result) => {
+        console.log('Profile data received:', result);
+        setProfileData(result);
+        setProfileDataLoading(false);
+        stopLoadingIfDataReceived();
+      })
+      .catch((err) => {
+        console.error('Failed to fetch profile data:', err);
+        setProfileData(null);
+        setProfileDataLoading(false);
+      });
+
+    // Fetch miner stats (fallback - important when profile fails)
+    setMinerStatsLoading(true);
+    getMinerStats(trimmedAddress)
+      .then((result) => {
+        console.log('Miner stats received:', result);
+        setMinerStats(result);
+        setMinerStatsLoading(false);
+        stopLoadingIfDataReceived();
+      })
+      .catch((err) => {
+        console.error('Failed to fetch miner stats:', err);
+        setMinerStatsLoading(false);
+      });
+
+    // Fetch leaderboard data (fallback for rounds/wins)
+    setLeaderboardDataLoading(true);
+    getLeaderboard()
+      .then((leaderboard) => {
         const minerEntry = leaderboard.find(entry => entry.pubkey === trimmedAddress);
         if (minerEntry) {
           setLeaderboardData(minerEntry);
         }
-      } catch (err) {
+        setLeaderboardDataLoading(false);
+        if (minerEntry) {
+          stopLoadingIfDataReceived();
+        }
+      })
+      .catch((err) => {
         console.error('Failed to fetch leaderboard data:', err);
-      }
+        setLeaderboardDataLoading(false);
+      });
 
-      // Fetch ORE leaderboard to get rank by unrefined ORE
-      try {
-        const oreLeaders = await getOreLeaders();
-        // Sort by rewards_ore (unrefined ORE) descending, same as leaderboard page
+    // Fetch wallet balance (non-critical)
+    getWalletBalance(trimmedAddress)
+      .then((result) => {
+        setWalletBalance(result);
+      })
+      .catch(() => {
+        setWalletBalance(null);
+      });
+
+    // Fetch miner history (non-critical, for graph)
+    getMinerHistory(trimmedAddress)
+      .then((result) => {
+        setHistoryData(result);
+      })
+      .catch(() => {
+        setHistoryData([]);
+      });
+
+    // Fetch ORE leaderboard (for rank)
+    setOreLeaderboardLoading(true);
+    getOreLeaders()
+      .then((oreLeaders) => {
         const sortedOreLeaders = [...oreLeaders].sort((a, b) => b.rewards_ore - a.rewards_ore);
         setOreLeaderboard(sortedOreLeaders.map(leader => ({ authority: leader.authority, rewards_ore: leader.rewards_ore })));
-      } catch (err) {
+        setOreLeaderboardLoading(false);
+      })
+      .catch((err) => {
         console.error('Failed to fetch ORE leaderboard data:', err);
-      }
+        setOreLeaderboardLoading(false);
+      });
 
-      // Show error if critical data is missing
-      if (!profileResult && !minerStatsResult) {
-        setError('Unable to load profile data. Please check the wallet address and try again.');
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch miner stats';
-      console.error('Error in performWalletSearch:', err);
-      setError(errorMessage);
-      setMinerStats(null);
-      setLeaderboardData(null);
-      setOreLeaderboard([]);
-      setHistoryData([]);
-      setWalletBalance(null);
-      setProfileData(null);
-      setWalletBalances(null);
-    } finally {
-      setLoading(false);
-    }
+    // Fallback timeout - ensures loading stops even if all APIs fail
+    setTimeout(() => {
+      stopLoadingIfDataReceived();
+    }, 3000);
   }, []);
 
   // Fetch SOL and ORE prices
   useEffect(() => {
     const fetchPrices = async () => {
       try {
-        // Fetch SOL price from CoinGecko
-        const solResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
-        const solData = await solResponse.json();
-        setSolPrice(solData.solana?.usd || null);
+      setPricesLoading(true);
+            // Fetch SOL price from CoinGecko
+            const solResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+            const solData = await solResponse.json();
+            setSolPrice(solData.solana?.usd || null);
 
-        // Fetch ORE price from token API
-        const tokenData = await getTokenCurrent();
-        setOrePrice(tokenData.priceUsd || null);
+            // Fetch ORE price from token API
+            try {
+              const tokenData = await getTokenCurrent();
+              console.log('Token data received:', tokenData);
+              const orePriceValue = typeof tokenData.priceUsd === 'number' 
+                ? tokenData.priceUsd 
+                : (tokenData.priceUsd ? parseFloat(String(tokenData.priceUsd)) : null);
+              console.log('ORE price value:', orePriceValue);
+              setOrePrice(orePriceValue);
+            } catch (tokenErr) {
+              // ORE price fetch failed - continue without it, USD calculations will show 0
+              console.error('Error fetching ORE price:', tokenErr);
+              setOrePrice(null);
+            } finally {
+              setPricesLoading(false);
+            }
       } catch (err) {
-        console.error('Error fetching prices:', err);
+        console.error('Error fetching SOL price:', err);
+        // Continue without prices - USD calculations will show 0
+        setPricesLoading(false);
       }
     };
 
@@ -191,46 +263,28 @@ export function MyProfileView() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load saved profile on mount and check URL parameters
+  // Auto-load profile when wallet is connected
   useEffect(() => {
-    // Check for wallet parameter in URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const walletParam = urlParams.get('wallet');
-    
-    if (walletParam && walletParam.trim()) {
-      setWalletAddress(walletParam.trim());
-      performWalletSearch(walletParam.trim());
-      return;
+    if (!connected || !publicKey) {
+      // Clear data when wallet disconnects
+          setMinerStats(null);
+          setLeaderboardData(null);
+          setOreLeaderboard([]);
+          setHistoryData([]);
+          setWalletBalance(null);
+          setProfileData(null);
+          setWalletBalances(null);
+          setError(null);
+          setProfileDataLoading(false);
+          setMinerStatsLoading(false);
+          setLeaderboardDataLoading(false);
+          setOreLeaderboardLoading(false);
+          return;
     }
-    
-    const savedWallet = localStorage.getItem('ore-profile-wallet');
-    const savedAsProfile = localStorage.getItem('ore-saved-profile');
-    if (savedAsProfile && savedAsProfile.trim()) {
-      setSavedProfile(savedAsProfile);
-      setWalletAddress(savedAsProfile);
-      // Trigger search automatically after a short delay to ensure component is mounted
-      const timer = setTimeout(() => {
-        performWalletSearch(savedAsProfile);
-      }, 100);
-      return () => clearTimeout(timer);
-    } else if (savedWallet && savedWallet.trim()) {
-      setWalletAddress(savedWallet);
-      const timer = setTimeout(() => {
-        performWalletSearch(savedWallet);
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [performWalletSearch]);
-
-  // If a Phantom wallet is connected, auto-load that wallet into the profile view once
-  useEffect(() => {
-    if (!connected || !publicKey || autoLoadedFromWallet) return;
 
     const address = publicKey.toBase58();
-    setWalletAddress(address);
-    setAutoLoadedFromWallet(true);
     void performWalletSearch(address);
-  }, [connected, publicKey, autoLoadedFromWallet, performWalletSearch]);
+  }, [connected, publicKey, performWalletSearch]);
 
   const formatTimeLabel = (timestamp: number) => {
     if (!timestamp || timestamp === 0) return '';
@@ -244,34 +298,6 @@ export function MyProfileView() {
     return `${minutes}m ago`;
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!walletAddress.trim()) {
-      setError('Please enter a wallet address');
-      return;
-    }
-
-    await performWalletSearch(walletAddress);
-  };
-
-  const handleSaveProfile = () => {
-    if (minerStats?.authority) {
-      localStorage.setItem('ore-saved-profile', minerStats.authority);
-      setSavedProfile(minerStats.authority);
-    }
-  };
-
-  const handleLoadSavedProfile = () => {
-    if (savedProfile) {
-      setWalletAddress(savedProfile);
-      performWalletSearch(savedProfile);
-    }
-  };
-
-  const handleResetSavedProfile = () => {
-    localStorage.removeItem('ore-saved-profile');
-    setSavedProfile(null);
-  };
 
 
   // Prepare graph data
@@ -289,24 +315,114 @@ export function MyProfileView() {
   const unrefinedOre = walletBalances ? parseFloat(walletBalances.unrefined || '0') : (minerStats ? minerStats.rewards_ore / ORE_CONVERSION_FACTOR : 0);
   const refinedOre = walletBalances ? parseFloat(walletBalances.refined || '0') : (minerStats ? minerStats.refined_ore / ORE_CONVERSION_FACTOR : 0);
   const stakedOre = walletBalances ? parseFloat(walletBalances.staked || '0') : 0;
-  const totalOre = walletBalances ? parseFloat(walletBalances.total || '0') : (unrefinedOre + refinedOre + stakedOre);
+  const totalOreCalculated = unrefinedOre + refinedOre + stakedOre;
+  const totalOre = walletBalances && walletBalances.total ? parseFloat(walletBalances.total || '0') : totalOreCalculated;
+  
+  console.log('Total ORE calculation:', {
+    walletBalances,
+    unrefinedOre,
+    refinedOre,
+    stakedOre,
+    totalOreCalculated,
+    totalOre
+  });
 
-  // Use profile data summary if available, otherwise calculate from rounds or fall back to leaderboard
-  const totalRounds = profileData?.summary?.totalRounds || profileData?.rounds?.length || leaderboardData?.rounds_played || 0;
-  const totalWins = profileData?.summary?.totalWins || profileData?.rounds?.filter((r: any) => r.isWinner === true).length || leaderboardData?.rounds_won || 0;
+  // Helper functions to check if data is loading for specific fields
+  const isRoundsDataLoading = () => {
+    // Total Rounds depends on profileData, leaderboardData, or minerStats
+    return profileDataLoading || leaderboardDataLoading || minerStatsLoading;
+  };
+
+  const isSolDeployedLoading = () => {
+    // SOL Deployed depends on profileData or minerStats
+    return profileDataLoading || minerStatsLoading;
+  };
+
+  const isSolEarnedLoading = () => {
+    // SOL Earned depends on profileData or minerStats
+    return profileDataLoading || minerStatsLoading;
+  };
+
+  const isOreEarnedLoading = () => {
+    // ORE Earned depends on profileData or minerStats
+    return profileDataLoading || minerStatsLoading;
+  };
+
+  const isUsdValuesLoading = () => {
+    // USD values depend on prices
+    return pricesLoading || isSolDeployedLoading() || isSolEarnedLoading() || isOreEarnedLoading();
+  };
+
+  // Use profile data summary if available, otherwise calculate from rounds or fall back to leaderboard or minerStats
+  // Prioritize: summary > rounds array > leaderboard > estimate from miner stats
+  const totalRounds = (profileData?.summary?.totalRounds !== undefined && profileData.summary.totalRounds !== null)
+    ? Number(profileData.summary.totalRounds)
+    : (profileData?.rounds && Array.isArray(profileData.rounds) && profileData.rounds.length > 0
+      ? profileData.rounds.length
+      : (leaderboardData && leaderboardData.rounds_played !== undefined && leaderboardData.rounds_played !== null
+        ? Number(leaderboardData.rounds_played)
+        : (minerStats && minerStats.total_deployed
+          ? Math.floor(minerStats.total_deployed / LAMPORTS_PER_SOL / 0.1) // Rough estimate from total deployed
+          : 0)));
+    
+  const totalWins = (profileData?.summary?.totalWins !== undefined && profileData.summary.totalWins !== null)
+    ? Number(profileData.summary.totalWins)
+    : (profileData?.rounds && Array.isArray(profileData.rounds) && profileData.rounds.length > 0
+      ? profileData.rounds.filter((r: any) => r.isWinner === true).length
+      : (leaderboardData && leaderboardData.rounds_won !== undefined && leaderboardData.rounds_won !== null
+        ? Number(leaderboardData.rounds_won)
+        : 0));
+  
+  console.log('Total Wins calculation:', {
+    fromSummary: profileData?.summary?.totalWins,
+    fromRounds: profileData?.rounds?.filter((r: any) => r.isWinner === true).length,
+    fromLeaderboard: leaderboardData?.rounds_won,
+    final: totalWins
+  });
   
   // Use summary values if available, otherwise calculate from rounds
-  const solDeployed = profileData?.summary?.totalSolDeployed
-    ? parseFloat(profileData.summary.totalSolDeployed)
-    : (profileData?.rounds 
-      ? profileData.rounds.reduce((sum: number, r: any) => sum + parseFloat(r.deployedSol || '0'), 0)
-      : (minerStats ? minerStats.total_deployed / LAMPORTS_PER_SOL : 0));
+  const solDeployedRaw = profileData?.summary?.totalSolDeployed !== undefined && profileData.summary.totalSolDeployed !== null
+    ? String(profileData.summary.totalSolDeployed)
+    : null;
   
-  const solEarned = profileData?.summary?.totalSolEarned
-    ? parseFloat(profileData.summary.totalSolEarned)
-    : (profileData?.rounds
-      ? profileData.rounds.reduce((sum: number, r: any) => sum + parseFloat(r.solEarned || '0'), 0)
-      : (minerStats ? minerStats.lifetime_rewards_sol / LAMPORTS_PER_SOL : 0));
+  const solDeployedFromRounds = profileData?.rounds && Array.isArray(profileData.rounds) && profileData.rounds.length > 0
+    ? profileData.rounds.reduce((sum: number, r: any) => {
+        const deployed = parseFloat(String(r.deployedSol || '0')) || 0;
+        return sum + deployed;
+      }, 0)
+    : 0;
+  
+  const solDeployedFromMinerStats = minerStats && minerStats.total_deployed
+    ? minerStats.total_deployed / LAMPORTS_PER_SOL
+    : 0;
+  
+  // Prefer summary, then rounds, then miner stats (even if miner stats is 0, it's valid)
+  const solDeployed = solDeployedRaw !== null
+    ? (parseFloat(solDeployedRaw) || 0)
+    : (solDeployedFromRounds > 0
+      ? solDeployedFromRounds
+      : solDeployedFromMinerStats); // Use miner stats even if 0 (it's a valid value)
+  
+  console.log('SOL Deployed calculation:', {
+    fromSummary: solDeployedRaw,
+    fromRounds: solDeployedFromRounds,
+    fromMinerStats: solDeployedFromMinerStats,
+    final: solDeployed
+  });
+  
+  const solEarned = (profileData?.summary?.totalSolEarned !== undefined && profileData.summary.totalSolEarned !== null)
+    ? (parseFloat(String(profileData.summary.totalSolEarned)) || 0)
+    : (profileData?.rounds && Array.isArray(profileData.rounds) && profileData.rounds.length > 0
+      ? profileData.rounds.reduce((sum: number, r: any) => sum + (parseFloat(String(r.solEarned || '0')) || 0), 0)
+      : (minerStats && minerStats.lifetime_rewards_sol
+        ? minerStats.lifetime_rewards_sol / LAMPORTS_PER_SOL
+        : 0));
+  
+  console.log('SOL Earned calculation:', {
+    fromSummary: profileData?.summary?.totalSolEarned,
+    fromMinerStats: minerStats ? minerStats.lifetime_rewards_sol / LAMPORTS_PER_SOL : null,
+    final: solEarned
+  });
   
   const oreEarned = profileData?.summary?.totalOreEarned
     ? parseFloat(profileData.summary.totalOreEarned)
@@ -337,11 +453,60 @@ export function MyProfileView() {
       : '0.0'
       : '0.0');
 
-  // Calculate USD values
-  const solEarnedUsd = solPrice && solEarned ? solEarned * solPrice : 0;
-  const solDeployedUsd = solPrice && solDeployed ? solDeployed * solPrice : 0;
-  const oreValueUsd = orePrice && totalOre ? totalOre * orePrice : 0;
+  // Calculate USD values - ensure values are numbers and prices are available
+  const solEarnedUsd = (solPrice && typeof solPrice === 'number' && typeof solEarned === 'number' && !isNaN(solEarned)) 
+    ? solEarned * solPrice 
+    : 0;
+  const solDeployedUsd = (solPrice && typeof solPrice === 'number' && typeof solDeployed === 'number' && !isNaN(solDeployed)) 
+    ? solDeployed * solPrice 
+    : 0;
+  
+  // Debug logging
+  console.log('Price calculations:', {
+    solPrice,
+    orePrice,
+    solEarned,
+    solDeployed,
+    totalOre,
+    solEarnedUsd,
+    solDeployedUsd
+  });
+  
+  const oreValueUsd = (orePrice && typeof orePrice === 'number' && !isNaN(orePrice) && typeof totalOre === 'number' && !isNaN(totalOre)) 
+    ? totalOre * orePrice 
+    : 0;
   const truePnl = solEarnedUsd + oreValueUsd - solDeployedUsd;
+  
+  console.log('ORE Value USD:', oreValueUsd, 'from totalOre:', totalOre, 'orePrice:', orePrice);
+
+  // Show connect wallet message if not connected
+  if (!connected || !publicKey) {
+    return (
+      <div className="min-h-screen bg-black py-8 px-4">
+        <div className="max-w-6xl mx-auto">
+          <div className="mb-8">
+            <h1 className="text-4xl font-bold text-slate-100 mb-2">My Profile</h1>
+            <p className="text-slate-400 text-lg">View your mining statistics and performance</p>
+          </div>
+
+          <div className="bg-[#21252C] border border-slate-700 rounded-lg p-12 text-center">
+            <svg className="w-16 h-16 text-slate-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <h2 className="text-2xl font-semibold text-slate-200 mb-2">Connect Your Wallet</h2>
+            <p className="text-slate-400 mb-6">Connect your wallet to view your mining profile and statistics.</p>
+            <button
+              onClick={() => setVisible(true)}
+              disabled={connecting}
+              className="bg-white text-black hover:bg-gray-100 rounded-full px-4 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {connecting ? 'Connecting...' : 'Connect'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black py-8 px-4">
@@ -349,69 +514,6 @@ export function MyProfileView() {
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-slate-100 mb-2">My Profile</h1>
           <p className="text-slate-400 text-lg">View your mining statistics and performance</p>
-        </div>
-
-        {/* Search Bar */}
-        <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6 mb-6">
-          <form onSubmit={handleSearch}>
-            <div className="flex flex-col gap-3">
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={walletAddress}
-                onChange={(e) => setWalletAddress(e.target.value)}
-                placeholder="Enter your Solana wallet address..."
-                className="flex-1 px-4 py-3 bg-slate-800 border border-slate-600 rounded-lg text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-              />
-              <button
-                type="submit"
-                  className="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-colors whitespace-nowrap flex items-center gap-2"
-                >
-                  {loading ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      Searching...
-                    </>
-                  ) : (
-                    'Search'
-                  )}
-                </button>
-                {savedProfile && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleLoadSavedProfile}
-                      className="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors whitespace-nowrap"
-                    >
-                      My Profile
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleResetSavedProfile}
-                      className="px-4 py-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 rounded-lg font-medium transition-colors whitespace-nowrap flex items-center gap-2"
-                      title="Reset saved profile"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </>
-                )}
-              </div>
-              {minerStats && minerStats.authority !== savedProfile && (
-                <button
-                  type="button"
-                  onClick={handleSaveProfile}
-                  className="self-start px-4 py-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/50 rounded-lg text-sm transition-colors flex items-center gap-2"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Save as My Profile
-              </button>
-              )}
-            </div>
-          </form>
         </div>
 
         {/* Error Message */}
@@ -422,16 +524,16 @@ export function MyProfileView() {
           </div>
         )}
 
-        {/* Loading Indicator */}
-        {loading && (
+        {/* Loading Indicator - Only show when no data yet */}
+        {loading && !profileData && !minerStats && !walletBalances && (
           <div className="mb-6 bg-amber-500/20 border border-amber-500/50 rounded-lg p-4 flex items-center gap-3">
             <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-amber-400"></div>
             <p className="text-amber-400 font-semibold">Loading profile data...</p>
           </div>
         )}
 
-        {/* Main Stats Panel - Always show when there's data or a search in progress */}
-        {(minerStats || loading) && (
+        {/* Main Stats Panel - Always show when wallet is connected or when we have any data */}
+        {(minerStats || profileData || walletBalances || loading) && (
           <div className="space-y-6">
             {/* Current Balances Section */}
             <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
@@ -456,7 +558,7 @@ export function MyProfileView() {
                 </a>
                 )}
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-4">
                 {/* Unrefined ORE */}
                 <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
                   <p className="text-sm font-semibold text-slate-200 mb-2">Unrefined ORE</p>
@@ -525,10 +627,8 @@ export function MyProfileView() {
                     </svg>
                     Leaderboard Rank
                   </p>
-                  {loading && oreLeaderboard.length === 0 ? (
-                    <div className="flex items-center gap-2">
-                      <div className="animate-pulse bg-slate-700 h-8 w-16 rounded"></div>
-                    </div>
+                  {isLeaderboardRankLoading() ? (
+                    <LoadingIndicator />
                   ) : oreLeaderboard.length > 0 && minerStats ? (
                     <p className="text-2xl font-bold text-white">
                       #{(() => {
@@ -551,7 +651,7 @@ export function MyProfileView() {
                 </svg>
                 Mining Performance
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-4">
                 {/* Total Rounds */}
                 <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
                   <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
@@ -560,7 +660,11 @@ export function MyProfileView() {
                     </svg>
                     Total Rounds
                   </p>
-                  <p className="text-2xl font-bold text-white">{totalRounds.toLocaleString()}</p>
+                  {isRoundsDataLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white">{totalRounds.toLocaleString()}</p>
+                  )}
             </div>
 
                 {/* Total Wins */}
@@ -571,7 +675,11 @@ export function MyProfileView() {
                     </svg>
                     Total Wins
                   </p>
-                  <p className="text-2xl font-bold text-white">{totalWins.toLocaleString()}</p>
+                  {isRoundsDataLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white">{totalWins.toLocaleString()}</p>
+                  )}
               </div>
 
                 {/* Win Rate */}
@@ -582,7 +690,11 @@ export function MyProfileView() {
                     </svg>
                     Win Rate
                   </p>
-                  <p className="text-2xl font-bold text-white">{winRate}%</p>
+                  {isRoundsDataLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white">{winRate}%</p>
+                  )}
               </div>
 
                 {/* ORE Earned */}
@@ -591,10 +703,14 @@ export function MyProfileView() {
                     <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded" />
                     ORE Earned
                   </p>
-                  <p className="text-2xl font-bold text-white flex items-center gap-2">
-                    <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
-                    {formatOre(oreEarned * ORE_CONVERSION_FACTOR)}
-                  </p>
+                  {isOreEarnedLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
+                      {formatOre(oreEarned * ORE_CONVERSION_FACTOR)}
+                    </p>
+                  )}
               </div>
 
                 {/* Cost per ORE */}
@@ -605,97 +721,141 @@ export function MyProfileView() {
                     </svg>
                     Cost per ORE
                   </p>
-                  <p className="text-2xl font-bold text-white">${costPerOreUsd > 0 ? formatCurrency(costPerOreUsd) : '0.00'}</p>
+                  {(isSolDeployedLoading() || isOreEarnedLoading() || pricesLoading) ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white">${costPerOreUsd > 0 ? formatCurrency(costPerOreUsd) : '0.00'}</p>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Bottom Section: SOL Flow, USD Value, Avg SOL/Round */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* SOL Flow Analysis */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-                <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                  </svg>
-                  SOL Flow Analysis
-                </h2>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-200 mb-1">SOL Deployed</p>
-                    <p className="text-xl font-bold text-white flex items-center gap-2">
-                      <SolanaLogo width={20} />
+            {/* Financial Analysis Section */}
+            <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
+              <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                Financial Analysis
+              </h2>
+              <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* SOL Deployed */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <SolanaLogo width={16} height={16} />
+                    SOL Deployed
+                  </p>
+                  {isSolDeployedLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <SolanaLogo width={24} />
                       {solDeployed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
                     </p>
-                      </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-200 mb-1">SOL Earned</p>
-                    <p className="text-xl font-bold text-white flex items-center gap-2">
-                      <SolanaLogo width={20} />
+                  )}
+                </div>
+
+                {/* SOL Earned */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <SolanaLogo width={16} height={16} />
+                    SOL Earned
+                  </p>
+                  {isSolEarnedLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <SolanaLogo width={24} />
                       {solEarned.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                     </p>
-                    </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-200 mb-1">Net SOL (PNL)</p>
-                    <p className={`text-xl font-bold flex items-center gap-2 ${netSolChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      <SolanaLogo width={20} />
+                  )}
+                </div>
+
+                {/* Net SOL (PNL) */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <SolanaLogo width={16} height={16} />
+                    Net SOL (PNL)
+                  </p>
+                  {(isSolDeployedLoading() || isSolEarnedLoading()) ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className={`text-2xl font-bold flex items-center gap-2 ${netSolChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      <SolanaLogo width={24} />
                       {netSolChange >= 0 ? '+' : ''}{netSolChange.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                     </p>
-                  </div>
+                  )}
                 </div>
-              </div>
 
-              {/* USD Value & True PNL */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-                <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  USD Value & True PNL
-                </h2>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-200 mb-1">SOL Earned</p>
-                    <p className="text-xl font-bold text-white">${formatCurrency(solEarnedUsd)}</p>
-                      </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-200 mb-1">SOL Deployed</p>
-                    <p className="text-xl font-bold text-white">${formatCurrency(solDeployedUsd)}</p>
-                    </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-200 mb-1">ORE Value</p>
-                    <p className="text-xl font-bold text-white flex items-center gap-2">
-                      <img src="/orelogo.jpg" alt="ORE" className="w-5 h-5 object-contain rounded" />
+                {/* Average SOL/Round */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <SolanaLogo width={16} height={16} />
+                    Average SOL/Round
+                  </p>
+                  {(isSolDeployedLoading() || isRoundsDataLoading()) ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <SolanaLogo width={24} />
+                      {avgSolPerRound.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                    </p>
+                  )}
+                </div>
+
+                {/* SOL Earned USD */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2">SOL Earned</p>
+                  {isUsdValuesLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white">${formatCurrency(solEarnedUsd)}</p>
+                  )}
+                </div>
+
+                {/* SOL Deployed USD */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2">SOL Deployed</p>
+                  {isUsdValuesLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white">${formatCurrency(solDeployedUsd)}</p>
+                  )}
+                </div>
+
+                {/* ORE Value USD */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded" />
+                    ORE Value
+                  </p>
+                  {isUsdValuesLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
                       ${formatCurrency(oreValueUsd)}
                     </p>
+                  )}
                 </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-200 mb-1">True PNL</p>
-                    <p className={`text-xl font-bold ${truePnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+
+                {/* True PNL */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2">True PNL</p>
+                  {isUsdValuesLoading() ? (
+                    <LoadingIndicator />
+                  ) : (
+                    <p className={`text-2xl font-bold ${truePnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {truePnl >= 0 ? '+' : ''}${formatCurrency(truePnl)}
-                    </p>
-                  </div>
-                  {solPrice && orePrice && (
-                    <p className="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-700 flex items-center gap-1">
-                      Using current prices: <SolanaLogo width={12} /> SOL ${formatCurrency(solPrice)} • <img src="/orelogo.jpg" alt="ORE" className="w-3 h-3 object-contain rounded" /> ORE ${formatCurrency(orePrice)}
                     </p>
                   )}
                 </div>
               </div>
-
-              {/* Average SOL/Round */}
-            <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-                <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  </svg>
-                  Average SOL/Round
-                </h2>
-                <p className="text-2xl font-bold text-white flex items-center gap-2">
-                  <SolanaLogo width={24} />
-                  {avgSolPerRound.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+              {solPrice && orePrice && (
+                <p className="text-xs text-slate-500 mt-4 pt-4 border-t border-slate-700 flex items-center gap-1 justify-center">
+                  Using current prices: <SolanaLogo width={12} /> SOL ${formatCurrency(solPrice)} • <img src="/orelogo.jpg" alt="ORE" className="w-3 h-3 object-contain rounded" /> ORE ${formatCurrency(orePrice)}
                 </p>
-              </div>
+              )}
             </div>
 
             {/* Graph Section */}
@@ -776,10 +936,11 @@ export function MyProfileView() {
           </div>
         )}
 
-        {/* Empty State */}
+        {/* Loading or Empty State */}
         {!minerStats && !loading && !error && (
           <div className="bg-[#21252C] border border-slate-700 rounded-lg p-12 text-center">
-            <p className="text-slate-400">Enter a Solana wallet address above to view mining statistics</p>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-400 mx-auto mb-4"></div>
+            <p className="text-slate-400">Loading profile data...</p>
           </div>
         )}
       </div>

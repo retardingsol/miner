@@ -113,7 +113,8 @@ export async function getWalletBalance(address: string): Promise<number> {
     return data.result.value / 1e9;
   } catch (error) {
     // Silently handle wallet balance errors - they're not critical
-    // The error is likely due to CORS restrictions on the Solana RPC endpoint
+    // The error is likely due to RPC rate limiting, CORS restrictions, or access forbidden
+    // Re-throw to let the caller handle it gracefully
     throw error;
   }
 }
@@ -215,7 +216,13 @@ export async function getMinerHistory(walletAddress: string): Promise<Array<{
     if (response.status === 404) {
       return []; // Return empty array if no history found
     }
-    throw new Error(`Failed to fetch miner history: ${response.status} ${response.statusText}`);
+    // Don't throw detailed errors for history - it's non-critical
+    // Return empty array to allow the profile to still display
+    if (response.status >= 500) {
+      // Server errors - likely temporary
+      return [];
+    }
+    throw new Error(`Failed to fetch miner history: ${response.status}`);
   }
   
   return response.json();

@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
 import { getLeaderboard, getOreLeaders } from '../services/api';
 import { SolanaLogo } from './SolanaLogo';
 
@@ -395,12 +394,14 @@ export function LeaderboardView() {
                         </td>
                         <td className="px-2 sm:px-3 py-2 whitespace-nowrap">
                           {displayMode === 'ore' ? (
-                            <Link
-                              to={`/my-profile?wallet=${entry.pubkey}`}
+                            <a
+                              href={`https://solscan.io/account/${entry.pubkey}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
                               className="text-sm font-mono text-slate-200 hover:text-amber-400 transition-colors"
                             >
                               {formatAddress(entry.pubkey)}
-                            </Link>
+                            </a>
                           ) : (
                             <a
                               href={`https://solscan.io/account/${entry.pubkey}`}

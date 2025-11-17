@@ -323,10 +323,6 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
       });
     }
   }, [state?.round?.roundId, state?.orePrice?.priceUsdRaw, state?.solPrice?.priceUsdRaw, totalDeployedSol, productionCostUsd]);
-  
-  const buybackVolumeOre = productionCostUsd > 0 && orePrice > 0
-    ? (productionCostUsd / orePrice).toFixed(2)
-    : '0';
 
   // EV Calc - Breakeven price calculation
   const breakevenPriceSol = totalDeployedSol > 0 && motherlodeAmount > 0
@@ -344,40 +340,6 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
     : 0;
   
   const isNegativeEV = expectedValue < 0;
-  const absExpectedValue = Math.abs(expectedValue);
-  
-  // Determine recommendation
-  const getRecommendation = () => {
-    if (Math.abs(expectedValue) <= 5) {
-      return {
-        action: 'Neutral',
-        text: 'Expected outcomes for mining and buying off market are roughly equivalent',
-        color: 'text-yellow-400',
-        bgColor: 'bg-yellow-900/20',
-        borderColor: 'border-yellow-500/50',
-        icon: 'neutral'
-      };
-    } else if (expectedValue < 0) {
-      return {
-        action: 'Buy ORE',
-        text: `Buying off market shows ${absExpectedValue.toFixed(1)}% better expected value than mining`,
-        color: 'text-red-400',
-        bgColor: 'bg-red-900/20',
-        borderColor: 'border-red-500/50',
-        icon: 'buy'
-      };
-    } else {
-      return {
-        action: 'Mine ORE',
-        text: `Mining shows ${absExpectedValue.toFixed(1)}% better expected value than buying off market`,
-        color: 'text-green-400',
-        bgColor: 'bg-green-900/20',
-        borderColor: 'border-green-500/50',
-        icon: 'mine'
-      };
-    }
-  };
-  const recommendation = getRecommendation();
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -728,73 +690,99 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
             </MouseTooltip>
           </div>
 
-          {/* PRODUCTION COST and BUYBACK VOLUME - Hidden on Martingale page */}
-          {!martingaleStats && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
-              {/* PRODUCTION COST */}
-              <MouseTooltip
-                enabled={tooltipsEnabled}
-                content={
-                  <>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      {productionCostSol.toFixed(2)} SOL - at {oreMinedPerRound} ORE mined / round
-                    </p>
-                    <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                      Calculated as: (Total Deployed SOL × 11%) / {oreMinedPerRound} ORE per round
-                    </p>
-                  </>
-                }
-              >
-                <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full">
-                  <div className="flex items-center gap-1 sm:gap-1.5 mb-2 min-w-0">
-                    <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-                    </svg>
-                    <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
-                      PRODUCTION COST
-                    </p>
-                  </div>
-                  <p className="text-lg sm:text-xl font-bold text-slate-100">{formatCurrency(productionCostUsd)}</p>
-                </div>
-              </MouseTooltip>
+          {/* Auto-mine configuration */}
+          <div className="mb-3">
+            <AutoMinePanel disabled={true} />
+          </div>
 
-              {/* BUYBACK VOLUME */}
-              <MouseTooltip
-                enabled={tooltipsEnabled}
-                content={
-                  <>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      At current market price
-                    </p>
-                    <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                      Calculated as: Production Cost USD / ORE Price
-                    </p>
-                  </>
-                }
-              >
-                <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full">
-                  <div className="flex items-center gap-1 sm:gap-1.5 mb-2 min-w-0">
-                    <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                      <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zM18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" />
-                    </svg>
-                    <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
-                      BUYBACK VOLUME
-                    </p>
+          {/* EV CALCULATOR - Hidden on Martingale page */}
+          {!martingaleStats && (
+            <MouseTooltip
+              enabled={tooltipsEnabled}
+              content={
+                <>
+                  <p className="text-xs text-slate-300 mb-2 font-semibold">How it works:</p>
+                  <p className="text-xs text-slate-300 mb-2 leading-relaxed">
+                    Breakeven = 0.1 × Total SOL Deployed / (1 + Motherlode / 625)
+                  </p>
+                  <p className="text-xs text-slate-400 mb-3 leading-relaxed">
+                    This represents the effective cost per ORE when mining, accounting for the 10% protocol fee and expected motherlode rewards.
+                  </p>
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex items-start gap-2">
+                      <span className="text-green-400">•</span>
+                      <span className="text-slate-300">If market price &gt; breakeven: <span className="text-green-400">Mining shows better expected value</span></span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-red-400">•</span>
+                      <span className="text-slate-300">If market price &lt; breakeven: <span className="text-red-400">Buying off market shows better expected value</span></span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-yellow-400">•</span>
+                      <span className="text-slate-300">If prices are close (±5%): <span className="text-yellow-400">Expected outcomes are roughly equivalent</span></span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 sm:gap-2">
-                    <img 
-                      src="/orelogo.jpg" 
-                      alt="ORE" 
-                      className="w-5 h-5 sm:w-6 sm:h-6 rounded flex-shrink-0"
-                    />
-                    <p className="text-lg sm:text-xl font-bold text-slate-100">{buybackVolumeOre} ORE</p>
+                </>
+              }
+            >
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full">
+                <div className="flex items-center gap-1 sm:gap-1.5 mb-2 sm:mb-3 min-w-0">
+                  <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                  </svg>
+                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
+                    Expected Value Calculator
+                  </p>
+                </div>
+                
+                {/* Production Cost, Breakeven Price, Market Price, and Expected Value on same line */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+                  {/* Production Cost */}
+                  <div>
+                    <p className="text-xs text-slate-400 mb-1">Production Cost</p>
+                    <div className="flex items-center gap-1.5">
+                      <SolanaLogo width={18} height={18} />
+                      <p className="text-lg font-bold text-slate-100">{productionCostSol.toFixed(2)}</p>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(productionCostUsd)}</p>
+                  </div>
+                  
+                  {/* Breakeven Price */}
+                  <div>
+                    <p className="text-xs text-slate-400 mb-1">Breakeven Price</p>
+                    <div className="flex items-center gap-1.5">
+                      <SolanaLogo width={18} height={18} />
+                      <p className="text-lg font-bold text-slate-100">{breakevenPriceSol.toFixed(2)}</p>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(breakevenPriceUsd)}</p>
+                  </div>
+                  
+                  {/* Market Price */}
+                  <div>
+                    <p className="text-xs text-slate-400 mb-1">Market Price</p>
+                    <div className="flex items-center gap-1.5">
+                      <SolanaLogo width={18} height={18} />
+                      <p className="text-lg font-bold text-blue-400">{marketPriceSol.toFixed(2)}</p>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(marketPriceUsd)}</p>
+                  </div>
+                  
+                  {/* Expected Value */}
+                  <div>
+                    <p className="text-xs text-slate-400 mb-1">Expected Value</p>
+                    <p className={`text-lg font-bold ${isNegativeEV ? 'text-red-400' : 'text-green-400'}`}>
+                      {expectedValue.toFixed(1)}%
+                    </p>
+                    <p className={`text-xs ${isNegativeEV ? 'text-red-400/70' : 'text-green-400/70'} mt-0.5`}>
+                      {formatCurrency(marketPriceUsd - breakevenPriceUsd)}
+                    </p>
                   </div>
                 </div>
-              </MouseTooltip>
-            </div>
+              </div>
+            </MouseTooltip>
           )}
 
-          {/* Martingale Stats or EV CALC */}
+          {/* Martingale Stats */}
           {martingaleStats ? (
             <div className="grid grid-cols-2 gap-2 sm:gap-3">
               {/* Total SOL Deployed */}
@@ -867,122 +855,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                 <p className="text-[9px] sm:text-xs text-slate-500 mt-0.5">Longest: {martingaleStats.longestLossStreak}</p>
               </div>
             </div>
-          ) : (
-          <MouseTooltip
-            enabled={tooltipsEnabled}
-            content={
-              <>
-                <p className="text-xs text-slate-300 mb-2 font-semibold">How it works:</p>
-                <p className="text-xs text-slate-300 mb-2 leading-relaxed">
-                  Breakeven = 0.1 × Total SOL Deployed / (1 + Motherlode / 625)
-                </p>
-                <p className="text-xs text-slate-400 mb-3 leading-relaxed">
-                  This represents the effective cost per ORE when mining, accounting for the 10% protocol fee and expected motherlode rewards.
-                </p>
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex items-start gap-2">
-                    <span className="text-green-400">•</span>
-                    <span className="text-slate-300">If market price &gt; breakeven: <span className="text-green-400">Mining shows better expected value</span></span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="text-red-400">•</span>
-                    <span className="text-slate-300">If market price &lt; breakeven: <span className="text-red-400">Buying off market shows better expected value</span></span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="text-yellow-400">•</span>
-                    <span className="text-slate-300">If prices are close (±5%): <span className="text-yellow-400">Expected outcomes are roughly equivalent</span></span>
-                  </div>
-                </div>
-              </>
-            }
-          >
-            <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help">
-              <div className="flex items-center gap-1 sm:gap-1.5 mb-2 sm:mb-3 min-w-0">
-                <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
-                </svg>
-                <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
-                  Expected Value Calculator
-                </p>
-              </div>
-              
-              <div className="space-y-3">
-                {/* Breakeven Price, Market Price, and Expected Value on same line */}
-                <div className="grid grid-cols-3 gap-3">
-                  {/* Breakeven Price */}
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Breakeven Price</p>
-                    <div className="flex items-center gap-1.5">
-                      <SolanaLogo width={18} height={18} />
-                      <p className="text-lg font-bold text-slate-100">{breakevenPriceSol.toFixed(2)}</p>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(breakevenPriceUsd)}</p>
-                  </div>
-                  
-                  {/* Market Price */}
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Market Price</p>
-                    <div className="flex items-center gap-1.5">
-                      <SolanaLogo width={18} height={18} />
-                      <p className="text-lg font-bold text-blue-400">{marketPriceSol.toFixed(2)}</p>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(marketPriceUsd)}</p>
-                  </div>
-                  
-                  {/* Expected Value */}
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Expected Value</p>
-                    <p className={`text-lg font-bold ${isNegativeEV ? 'text-red-400' : 'text-green-400'}`}>
-                      {expectedValue.toFixed(1)}%
-                    </p>
-                    <p className={`text-xs ${isNegativeEV ? 'text-red-400/70' : 'text-green-400/70'} mt-0.5`}>
-                      {formatCurrency(marketPriceUsd - breakevenPriceUsd)}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Recommendation - Inside EV CALC card */}
-                <div className={`mt-3 pt-3 border-t border-slate-700/50 rounded ${recommendation.bgColor} p-3 border ${recommendation.borderColor}`}>
-                  <div className="flex items-start gap-2">
-                    {/* Icon */}
-                    <div className={`flex-shrink-0 w-8 h-8 rounded ${recommendation.bgColor} border ${recommendation.borderColor} flex items-center justify-center`}>
-                      {recommendation.icon === 'buy' && (
-                        <svg className={`w-5 h-5 ${recommendation.color}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                        </svg>
-                      )}
-                      {recommendation.icon === 'mine' && (
-                        <svg className={`w-5 h-5 ${recommendation.color}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      )}
-                      {recommendation.icon === 'neutral' && (
-                        <svg className={`w-5 h-5 ${recommendation.color}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                        </svg>
-                      )}
-                    </div>
-                    {/* Text */}
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-bold ${recommendation.color} mb-0.5`}>
-                        {recommendation.action}
-                      </p>
-                      <p className="text-xs text-slate-300 leading-relaxed">
-                        {recommendation.text}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </MouseTooltip>
-          )}
-
-          {/* Auto-mine configuration (preview) - sits under EV calculator */}
-          <div className="mt-3">
-            <AutoMinePanel />
-          </div>
+          ) : null}
 
           {/* Market Price vs Production Cost Chart - Hidden for now */}
           {false && (
@@ -1010,23 +883,6 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
               )}
             </div>
           )}
-          </div>
-          
-          {/* API Powered By - Bottom center */}
-          <div className="flex items-center justify-center gap-2 pt-4">
-            <a
-              href="https://gmore.fun"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-400 transition-colors"
-            >
-              <img 
-                src="/gmore-logo.webp" 
-                alt="gmore.fun" 
-                className="w-4 h-4"
-              />
-              API powered by <span className="text-slate-400">gmore.fun</span>
-            </a>
           </div>
           
           {/* Color Coding Help Icon and Tooltip Toggle - Bottom of right side */}
