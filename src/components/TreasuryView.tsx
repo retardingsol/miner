@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { getTreasuries, getWalletBalance, getSupplyOnMarket, getInflationCurrent, get24hMinted, getNetEmissions, getTokenCurrent, getTokenHistory, getTokenDistribution, getRevenueHistory, getSolMarketCap } from '../services/api';
+import { LineChart, Line, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
+import { getTreasuries, getWalletBalance, getSupplyOnMarket, getInflationCurrent, get24hMinted, getNetEmissions, getTokenCurrent, getTokenHistory, getTokenDistribution, getRevenueHistory, getSolMarketCap, getBuybackBalanceHistory, getBuybacks, getStakingMetricsNow, getStakingMetricsHistory, getLiquidityDexBreakdown, getLiquidityHistory, getUnrefinedMetricsNow, getUnrefinedMetricsHistory } from '../services/api';
 import { SolanaLogo } from './SolanaLogo';
 
 const TREASURY_WALLET = '45db2FSR4mcXdSVVZbKbwojU6uYDpMyhpEi7cC8nHaWG';
@@ -48,17 +48,71 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
   const [revenueLoading, setRevenueLoading] = useState(true);
   const [revenueData, setRevenueData] = useState<any>(null);
   const [solMarketCap, setSolMarketCap] = useState<number | null>(null);
+  const [solPrice, setSolPrice] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, setBalanceLoading] = useState(true);
+  const [buybackHistory, setBuybackHistory] = useState<Array<{
+    timestamp: string;
+    solSpent: number;
+    oreBuried: number;
+    stakingYield: number;
+  }>>([]);
+  const [buybackHistoryLoading, setBuybackHistoryLoading] = useState(false);
+  const [buybackShowCount, setBuybackShowCount] = useState(5);
+  const [buybacks, setBuybacks] = useState<Array<{
+    timestamp: string;
+    solSpent: number;
+    oreBuried: number;
+    stakingYield: number;
+  }>>([]);
+  const [buybacksLoading, setBuybacksLoading] = useState(false);
+  const [buybacksShowCount, setBuybacksShowCount] = useState(5);
+  const [stakingMetricsNow, setStakingMetricsNow] = useState<any>(null);
+  const [stakingMetricsHistory, setStakingMetricsHistory] = useState<Array<{
+    date: string;
+    apr: number;
+    apy: number;
+    dailyReturn: number;
+    stakeFees: number;
+    L_7d: number;
+    S_bar_7d: number;
+  }>>([]);
+  const [stakingLoading, setStakingLoading] = useState(false);
+  const [liquidityDexData, setLiquidityDexData] = useState<Array<{
+    dexName: string;
+    liquidityUsd: number;
+    volume24h: number;
+    poolCount: number;
+    pools: Array<{
+      pairAddress: string;
+      liquidityUsd: number;
+      volume24h: number;
+    }>;
+  }>>([]);
+  const [liquidityLoading, setLiquidityLoading] = useState(false);
+  const [liquidityHistory, setLiquidityHistory] = useState<Array<{
+    timestamp: string;
+    totalLiquidity: number;
+    priceUsd: number;
+    volume24h: number;
+  }>>([]);
+  const [liquidityHistoryLoading, setLiquidityHistoryLoading] = useState(false);
+  const [unrefinedMetricsNow, setUnrefinedMetricsNow] = useState<any>(null);
+  const [unrefinedMetricsHistory, setUnrefinedMetricsHistory] = useState<Array<{
+    date: string;
+    apr: number;
+    apy: number;
+    dailyReturn: number;
+    haircuts: number;
+    L_7d: number;
+    U_bar_7d: number;
+  }>>([]);
+  const [unrefinedLoading, setUnrefinedLoading] = useState(false);
 
-  // Reset loading states when view changes - simplified approach
-  // Don't interfere with data fetching, just ensure views can render
+  // Reset error state when view changes
   useEffect(() => {
-    // Clear error when switching views
-    if (currentView) {
-      // Don't clear data - let views use cached data if available
-      // This prevents black screen by showing cached data immediately
-    }
+    // Clear error when switching views to prevent stale errors from showing
+    setError(null);
   }, [currentView]);
 
   useEffect(() => {
@@ -145,9 +199,52 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
       }
     };
 
+    const fetchBuybackHistory = async () => {
+      try {
+        setBuybackHistoryLoading(true);
+        const history = await getBuybackBalanceHistory();
+        // Sort by timestamp descending (newest first)
+        const sortedHistory = [...history].sort((a, b) => {
+          const timeA = new Date(a.timestamp).getTime();
+          const timeB = new Date(b.timestamp).getTime();
+          return timeB - timeA;
+        });
+        setBuybackHistory(sortedHistory);
+      } catch (err) {
+        console.error('Error fetching buyback history:', err);
+        // Don't set error state for buyback history - it's not critical
+      } finally {
+        setBuybackHistoryLoading(false);
+      }
+    };
+
+    const fetchBuybacks = async () => {
+      try {
+        setBuybacksLoading(true);
+        const data = await getBuybacks();
+        // Sort by timestamp descending (newest first)
+        const sortedBuybacks = [...data].sort((a, b) => {
+          const timeA = new Date(a.timestamp).getTime();
+          const timeB = new Date(b.timestamp).getTime();
+          return timeB - timeA;
+        });
+        setBuybacks(sortedBuybacks);
+      } catch (err) {
+        console.error('Error fetching buybacks:', err);
+      } finally {
+        setBuybacksLoading(false);
+      }
+    };
+
     fetchInflationData();
+    fetchBuybackHistory();
+    fetchBuybacks();
     // Refresh inflation data every 60 seconds
-    const interval = setInterval(fetchInflationData, 60000);
+    const interval = setInterval(() => {
+      fetchInflationData();
+      fetchBuybackHistory();
+      fetchBuybacks();
+    }, 60000);
     return () => clearInterval(interval);
   }, [currentView]);
 
@@ -450,6 +547,42 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
     }));
   }, [tokenHistory]);
 
+  // Buyback chart data - ALWAYS call this hook (unconditionally)
+  const buybackChartData = useMemo(() => {
+    if (!buybackHistory || !Array.isArray(buybackHistory) || buybackHistory.length === 0) return [];
+    
+    // Sort by timestamp ascending (oldest first) for cumulative calculation
+    const sortedHistory = [...buybackHistory].sort((a, b) => {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      return timeA - timeB;
+    });
+    
+    // Calculate cumulative values
+    let cumulativeOreBuried = 0;
+    let cumulativeStakingYield = 0;
+    let cumulativeSolSpent = 0;
+    
+    return sortedHistory.map((item) => {
+      cumulativeOreBuried += item.oreBuried;
+      cumulativeStakingYield += item.stakingYield;
+      cumulativeSolSpent += item.solSpent;
+      
+      const date = new Date(item.timestamp);
+      return {
+        date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        timestamp: date.getTime(),
+        solSpent: item.solSpent,
+        oreBuried: item.oreBuried,
+        stakingYield: item.stakingYield,
+        cumulativeOreBuried,
+        cumulativeStakingYield,
+        cumulativeSolSpent,
+        totalOre: cumulativeOreBuried + cumulativeStakingYield,
+      };
+    });
+  }, [buybackHistory]);
+
   // Revenue calculations - ALWAYS call this hook (unconditionally)
   const revenueCalculations = useMemo(() => {
     if (!revenueData || !Array.isArray(revenueData) || revenueData.length === 0) return null;
@@ -605,6 +738,150 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
     return () => clearInterval(interval);
   }, [currentView]);
 
+  // Fetch staking metrics
+  useEffect(() => {
+    if (currentView !== 'staking') {
+      // Reset loading state when leaving staking view
+      setStakingLoading(false);
+      return;
+    }
+
+    // Set loading state immediately when entering staking view
+        setStakingLoading(true);
+        setError(null);
+
+    const fetchStakingData = async () => {
+      try {
+        const [now, history] = await Promise.all([
+          getStakingMetricsNow(),
+          getStakingMetricsHistory()
+        ]);
+        setStakingMetricsNow(now);
+        setStakingMetricsHistory(history);
+        setStakingLoading(false);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch staking data';
+        setError(errorMessage);
+        setStakingLoading(false);
+        console.error('Error fetching staking data:', err);
+      }
+    };
+
+    // Fetch immediately
+    fetchStakingData();
+    
+    // Refresh staking data every 60 seconds
+    const interval = setInterval(fetchStakingData, 60000);
+    return () => clearInterval(interval);
+  }, [currentView]);
+
+  // Fetch unrefined staking metrics
+  useEffect(() => {
+    if (currentView !== 'unrefined') {
+      setUnrefinedLoading(false);
+      return;
+    }
+
+    setUnrefinedLoading(true);
+    setError(null);
+
+    const fetchUnrefinedData = async () => {
+      try {
+        const [now, history] = await Promise.all([
+          getUnrefinedMetricsNow(),
+          getUnrefinedMetricsHistory()
+        ]);
+        setUnrefinedMetricsNow(now);
+        setUnrefinedMetricsHistory(history);
+        setUnrefinedLoading(false);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch unrefined staking data';
+        setError(errorMessage);
+        setUnrefinedLoading(false);
+        console.error('Error fetching unrefined staking data:', err);
+      }
+    };
+
+    fetchUnrefinedData();
+    const interval = setInterval(fetchUnrefinedData, 60000);
+    return () => clearInterval(interval);
+  }, [currentView]);
+
+  // Fetch liquidity data
+  useEffect(() => {
+    if (currentView !== 'liquidity') {
+      // Reset loading state when leaving liquidity view
+      setLiquidityLoading(false);
+      return;
+    }
+
+    // Set loading state immediately when entering liquidity view
+        setLiquidityLoading(true);
+        setError(null);
+
+    const fetchLiquidityData = async () => {
+      try {
+        const [data, tokenData] = await Promise.all([
+          getLiquidityDexBreakdown(),
+          getTokenCurrent().catch(() => null) // Fetch token data for price, but don't fail if it errors
+        ]);
+        setLiquidityDexData(data);
+        if (tokenData) {
+          setTokenCurrent(tokenData);
+        }
+        
+        setLiquidityLoading(false);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch liquidity data';
+        setError(errorMessage);
+        setLiquidityLoading(false);
+        console.error('Error fetching liquidity data:', err);
+      }
+    };
+
+    // Fetch liquidity history (includes both liquidity and price data)
+    const fetchLiquidityHistory = async () => {
+      try {
+        setLiquidityHistoryLoading(true);
+        // Fetch historical liquidity data which includes both liquidity and price
+        const history = await getLiquidityHistory();
+        setLiquidityHistory(history);
+        // Also fetch token history as fallback for price data
+        const tokenHistory = await getTokenHistory(720).catch(() => []);
+        setTokenHistory(tokenHistory);
+        setLiquidityHistoryLoading(false);
+      } catch (err) {
+        console.error('Error fetching liquidity history:', err);
+        setLiquidityHistoryLoading(false);
+      }
+    };
+
+    // Fetch SOL price for conversion
+    const fetchSolPrice = async () => {
+      try {
+        const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+        if (response.ok) {
+          const data = await response.json();
+          setSolPrice(data.solana?.usd || null);
+        }
+      } catch (err) {
+        console.error('Error fetching SOL price:', err);
+      }
+    };
+
+    // Fetch immediately
+    fetchLiquidityData();
+    fetchLiquidityHistory();
+    fetchSolPrice();
+    
+    // Refresh liquidity data every 60 seconds
+    const interval = setInterval(() => {
+      fetchLiquidityData();
+      fetchSolPrice();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [currentView]);
+
   // Fetch SOL market cap for dominance calculation
   useEffect(() => {
     if (currentView !== 'token') {
@@ -628,6 +905,157 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
     const interval = setInterval(fetchMarketCap, 300000);
     return () => clearInterval(interval);
   }, [currentView]);
+
+  // Staking view hooks - MUST be called unconditionally before any conditional returns
+  const calculateAPY = (apr: number) => {
+    // APR is provided as a percentage (e.g., 21.85 for 21.85%)
+    // Convert to decimal, then calculate APY
+    const aprDecimal = apr / 100;
+    return ((1 + aprDecimal / 365) ** 365 - 1) * 100;
+  };
+
+  const aprChartData = useMemo(() => {
+    if (currentView !== 'staking' || !stakingMetricsHistory || stakingMetricsHistory.length === 0) return [];
+    try {
+      return stakingMetricsHistory.map((item) => ({
+        date: new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        apr: item.apr || 0,
+        apy: item.apy || calculateAPY(item.apr || 0),
+      })).sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return dateA - dateB;
+      });
+    } catch (e) {
+      return [];
+    }
+  }, [currentView, stakingMetricsHistory]);
+
+  // Unrefined staking chart data - MUST be called unconditionally before any conditional returns
+  const unrefinedAprChartData = useMemo(() => {
+    if (currentView !== 'unrefined' || !unrefinedMetricsHistory || unrefinedMetricsHistory.length === 0) return [];
+    try {
+      return unrefinedMetricsHistory.map((item) => ({
+        date: new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        apr: item.apr || 0,
+        apy: item.apy || calculateAPY(item.apr || 0),
+      })).sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return dateA - dateB;
+      });
+    } catch (e) {
+      return [];
+    }
+  }, [currentView, unrefinedMetricsHistory]);
+
+  // Liquidity view hooks - MUST be called unconditionally before any conditional returns
+  const totalLiquidity = useMemo(() => {
+    if (currentView !== 'liquidity' || !Array.isArray(liquidityDexData) || liquidityDexData.length === 0) return 0;
+    return liquidityDexData.reduce((sum, dex) => sum + (dex.liquidityUsd || 0), 0);
+  }, [currentView, liquidityDexData]);
+
+  const totalVolume24h = useMemo(() => {
+    if (currentView !== 'liquidity' || !Array.isArray(liquidityDexData) || liquidityDexData.length === 0) return 0;
+    return liquidityDexData.reduce((sum, dex) => sum + (dex.volume24h || 0), 0);
+  }, [currentView, liquidityDexData]);
+
+  const totalPools = useMemo(() => {
+    if (currentView !== 'liquidity' || !Array.isArray(liquidityDexData) || liquidityDexData.length === 0) return 0;
+    return liquidityDexData.reduce((sum, dex) => sum + (dex.poolCount || 0), 0);
+  }, [currentView, liquidityDexData]);
+
+  // Liquidity & Price chart data - use liquidity history API which includes both liquidity and price
+  const liquidityPriceChartData = useMemo(() => {
+    if (currentView !== 'liquidity') return [];
+    
+    // Use liquidity history as primary data source (it includes both liquidity and price)
+    if (liquidityHistory.length > 0) {
+      // Limit to last 720 data points (30 days) for performance
+      // Also filter to show data points at reasonable intervals (e.g., hourly) to avoid overcrowding
+      const limitedHistory = liquidityHistory.slice(-720);
+      
+      // Group by hour to reduce data points while maintaining accuracy
+      const hourlyData = new Map<string, {
+        timestamp: string;
+        totalLiquidity: number;
+        priceUsd: number;
+        count: number;
+      }>();
+      
+      limitedHistory.forEach(item => {
+        const date = new Date(item.timestamp);
+        // Round to hour
+        const hourKey = new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).toISOString();
+        
+        if (hourlyData.has(hourKey)) {
+          const existing = hourlyData.get(hourKey)!;
+          // Average values for the same hour
+          existing.totalLiquidity = (existing.totalLiquidity * existing.count + item.totalLiquidity) / (existing.count + 1);
+          existing.priceUsd = (existing.priceUsd * existing.count + item.priceUsd) / (existing.count + 1);
+          existing.count += 1;
+          // Keep the most recent timestamp
+          if (new Date(item.timestamp) > new Date(existing.timestamp)) {
+            existing.timestamp = item.timestamp;
+          }
+        } else {
+          hourlyData.set(hourKey, {
+            timestamp: item.timestamp,
+            totalLiquidity: item.totalLiquidity,
+            priceUsd: item.priceUsd,
+            count: 1,
+          });
+        }
+      });
+      
+      // Convert to array and format for chart
+      const chartData = Array.from(hourlyData.values()).map(item => {
+        const date = new Date(item.timestamp);
+        // Format date consistently - show month, day, and time (hour)
+        const month = date.toLocaleDateString('en-US', { month: 'short' });
+        const day = date.getDate();
+        const hour = date.getHours();
+        const period = hour >= 12 ? 'PM' : 'AM';
+        const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+        // Format: "Nov 12, 4 PM" or "Nov 13, 10 AM"
+        const dateStr = `${month} ${day}, ${displayHour} ${period}`;
+        
+        return {
+          date: dateStr,
+          timestamp: item.timestamp,
+          totalLiquidity: item.totalLiquidity,
+          priceUsd: item.priceUsd,
+        };
+      }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      
+      return chartData;
+    }
+    
+    // Fallback: If no liquidity history, use token history with current liquidity
+    if (tokenHistory.length > 0 && totalLiquidity > 0) {
+      const limitedHistory = tokenHistory.slice(-720);
+      return limitedHistory.map(item => {
+        const date = new Date(item.timestamp);
+        // Format date consistently - show month, day, and time (hour)
+        const month = date.toLocaleDateString('en-US', { month: 'short' });
+        const day = date.getDate();
+        const hour = date.getHours();
+        const period = hour >= 12 ? 'PM' : 'AM';
+        const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+        // Format: "Nov 12, 4 PM" or "Nov 13, 10 AM"
+        const dateStr = `${month} ${day}, ${displayHour} ${period}`;
+        
+        return {
+          date: dateStr,
+          timestamp: item.timestamp,
+          totalLiquidity: totalLiquidity,
+          priceUsd: item.priceUsd || 0,
+        };
+      }).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    }
+    
+    return [];
+  }, [currentView, liquidityHistory, tokenHistory, totalLiquidity]);
 
   // Token View formatting functions (defined outside conditional to avoid re-creation)
   const formatTokenOre = (value: number | string) => {
@@ -671,12 +1099,6 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
   const timeframeOptions = [
     { label: '1D', hours: 24 },
     { label: '7D', hours: 168 },
-    { label: '14D', hours: 336 },
-    { label: '30D', hours: 720 },
-    { label: '3M', hours: 2160 },
-    { label: '6M', hours: 4320 },
-    { label: '12M', hours: 8640 },
-    { label: '2Y', hours: 17520 },
   ];
 
   const distributionColors = [
@@ -729,23 +1151,7 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
           <div className="mb-4">
             <h1 className="text-3xl font-bold text-slate-100 mb-1">ORE Token Metrics</h1>
             <p className="text-slate-400 text-sm">
-              Real-time token supply, price, market cap, and holder distribution tracking. (
-              <a
-                href="https://refinore.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-400 transition-colors"
-              >
-                charts by
-                <img 
-                  src="/refinore-logo.png" 
-                  alt="refinORE" 
-                  className="h-5 w-auto object-contain inline"
-                  style={{ maxWidth: '80px' }}
-                />
-                refinORE.com
-              </a>
-              )
+              Real-time token supply, price, market cap, and holder distribution tracking.
             </p>
           </div>
 
@@ -1001,44 +1407,79 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
                 )}
               </div>
 
-              {/* Holder Distribution and Details */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                {/* Holder Distribution Donut Chart */}
-                <div className="bg-[#21252C] rounded-lg p-6 border border-slate-700">
-                  <h2 className="text-xl font-semibold text-slate-100 mb-1">Holder Distribution</h2>
-                  <p className="text-slate-400 text-sm mb-4">Breakdown of holders by ORE amount</p>
-                  {tokenDistribution.length > 0 ? (() => {
-                    // Calculate total holders for percentage calculation
-                    const totalHolders = tokenDistribution.reduce((sum, item) => sum + item.holders, 0);
-                    
-                    // Map and sort by percentage (largest first) for better visualization
-                    const chartData = tokenDistribution
-                      .map((item, idx) => {
-                        const percent = totalHolders > 0 ? (item.holders / totalHolders) * 100 : 0;
-                        return {
-                          name: item.range,
-                          value: item.holders,
-                          percent: percent,
-                          color: distributionColors[idx % distributionColors.length],
-                        };
-                      })
-                      .sort((a, b) => b.value - a.value); // Sort by value descending
-                    
-                    // Custom label function - only show labels for segments >= 1%
-                    const renderLabel = (entry: any) => {
-                      if (entry.percent >= 1) {
-                        return `${entry.percent.toFixed(0)}%`;
-                      }
-                      return '';
+              {/* Holder Distribution - Full width donut chart */}
+              <div className="bg-[#21252C] rounded-lg p-6 border border-slate-700 mb-6">
+                <h2 className="text-xl font-semibold text-slate-100 mb-1">Holder Distribution</h2>
+                <p className="text-slate-400 text-sm mb-4">Breakdown of holders by ORE amount</p>
+                {tokenDistribution.length > 0 ? (() => {
+                  // Calculate total tokens for percentage calculation (distribution by ORE amount)
+                  const totalTokens = tokenDistribution.reduce((sum, item) => sum + parseFloat(item.totalOre || '0'), 0);
+                  
+                  // Create a color map for consistent color assignment
+                  // Treasury should always be the brightest blue
+                  const getColorForRange = (range: string, index: number): string => {
+                    // Treasury gets the brightest blue
+                    if (range.includes('Treasury') || range.includes('Unrefined')) {
+                      return '#60a5fa'; // light blue (brightest)
+                    }
+                    // Assign colors based on range order for consistency
+                    // Map exact range labels to colors
+                    const colorMap: { [key: string]: string } = {
+                      '< 1': '#3b82f6', // blue
+                      '1-10': '#2563eb', // darker blue
+                      '11-50': '#1e40af', // even darker blue
+                      '51-250': '#f472b6', // light magenta
+                      '251-500': '#ec4899', // magenta
+                      '501-1000': '#db2777', // darker magenta
+                      '1001-5000': '#a855f7', // purple
+                      '5001-10000': '#9333ea', // darker purple
+                      '10001+': '#7e22ce', // darkest purple
+                      'Treasury (Holds all Unrefined ORE and Rewards)': '#60a5fa', // light blue (brightest)
                     };
-                    
-                    return (
+                    // Check exact match first, then check if range contains keywords
+                    if (colorMap[range]) {
+                      return colorMap[range];
+                    }
+                    if (range.includes('Treasury') || range.includes('Unrefined')) {
+                      return '#60a5fa'; // light blue (brightest)
+                    }
+                    return distributionColors[index % distributionColors.length];
+                  };
+                  
+                  // Map distribution data with consistent colors
+                  // Use token amounts (totalOre) for distribution, not holder counts
+                  const mappedData = tokenDistribution.map((item, idx) => {
+                    const tokenAmount = parseFloat(item.totalOre || '0');
+                    const percent = totalTokens > 0 ? (tokenAmount / totalTokens) * 100 : 0;
+                      return {
+                        name: item.range,
+                      value: tokenAmount,
+                        percent: percent,
+                      color: getColorForRange(item.range, idx),
+                      totalOre: item.totalOre,
+                      holders: item.holders,
+                      };
+                  });
+                  
+                  // Sort by value descending (largest first) for better visualization
+                  const chartData = [...mappedData].sort((a, b) => b.value - a.value);
+                  
+                  // Custom label function - only show labels for segments >= 1%
+                  const renderLabel = (entry: any) => {
+                    if (entry.percent >= 1) {
+                      return `${entry.percent.toFixed(0)}%`;
+                    }
+                    return '';
+                  };
+                  
+                  return (
+                    <div className="relative">
                       <ResponsiveContainer width="100%" height={400}>
                         <PieChart>
                           <Pie
                             data={chartData}
-                            cx="50%"
-                            cy="45%"
+                            cx="35%"
+                            cy="50%"
                             labelLine={false}
                             label={renderLabel}
                             outerRadius={120}
@@ -1048,13 +1489,13 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
                             isAnimationActive={false}
                           >
                             {chartData.map((entry, idx) => (
-                              <Cell key={`cell-${idx}`} fill={entry.color} />
+                              <Cell key={`cell-${idx}-${entry.name}`} fill={entry.color} />
                             ))}
                           </Pie>
                           <Tooltip
                             formatter={(value: number, _name: string, props: any) => {
                               return [
-                                `${value.toLocaleString()} holders (${props.payload.percent.toFixed(1)}%)`,
+                                `${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ORE (${props.payload.percent.toFixed(1)}%)`,
                                 props.payload.name
                               ];
                             }}
@@ -1063,25 +1504,60 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
                               border: '1px solid #475569',
                               borderRadius: '8px',
                               color: '#f1f5f9',
+                              padding: '12px',
                             }}
+                            labelStyle={{ color: '#94a3b8', marginBottom: '8px', fontSize: '12px', fontWeight: '600' }}
                           />
                           <Legend 
-                            verticalAlign="bottom" 
-                            height={36}
-                            formatter={(value, _entry: any) => {
-                              const dataItem = chartData.find(d => d.name === value);
-                              return dataItem ? `${value} (${dataItem.percent.toFixed(1)}%)` : value;
+                            verticalAlign="middle"
+                            align="right"
+                            layout="vertical"
+                            iconType="circle"
+                            wrapperStyle={{ paddingLeft: '20px' }}
+                            formatter={(value: string) => {
+                              return value;
+                            }}
+                            content={({ payload }) => {
+                              // Sort legend by value descending to match chart order
+                              const sortedPayload = [...(payload || [])].sort((a, b) => {
+                                const aValue = a.payload?.value || 0;
+                                const bValue = b.payload?.value || 0;
+                                return bValue - aValue;
+                              });
+                              
+                              return (
+                                <div className="flex flex-col gap-2">
+                                  {sortedPayload.map((entry, index) => {
+                                    const dataItem = chartData.find(d => d.name === entry.value);
+                                    if (!dataItem) return null;
+                                    
+                                    return (
+                                      <div key={`legend-${index}`} className="flex items-center gap-2 text-sm">
+                                        <div 
+                                          className="w-3 h-3 rounded-full" 
+                                          style={{ backgroundColor: dataItem.color }}
+                                        />
+                                        <span className="text-slate-300">{dataItem.name}</span>
+                                        <span className="text-slate-400 ml-auto">
+                                          {dataItem.percent.toFixed(1)}%
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
                             }}
                           />
                         </PieChart>
                       </ResponsiveContainer>
-                    );
-                  })() : (
-                    <div className="h-96 flex items-center justify-center text-slate-400">
-                      No distribution data available
                     </div>
-                  )}
-                </div>
+                  );
+                })() : (
+                  <div className="h-96 flex items-center justify-center text-slate-400">
+                    No distribution data available
+                  </div>
+                )}
+              </div>
 
                 {/* Distribution Details Table */}
                 <div className="bg-[#21252C] rounded-lg p-6 border border-slate-700">
@@ -1119,7 +1595,6 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
                     </div>
                   )}
                 </div>
-              </div>
 
               {/* Chart Data Credit - refinORE.com */}
               <div className="w-full flex items-center justify-center pt-4 mb-2 -mx-4 px-4">
@@ -1165,6 +1640,41 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
               </div>
             </div>
           )}
+
+          {/* Footer Credit - refinORE.com and Kriptikz */}
+          <div className="mt-8 pt-6 border-t border-slate-700/50">
+            <p className="text-center text-slate-500 text-sm">
+              Data provided by{' '}
+              <a
+                href="https://refinore.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <img 
+                  src="/refinore-logo.png" 
+                  alt="refinORE" 
+                  className="h-4 w-auto object-contain inline"
+                  style={{ maxWidth: '60px' }}
+                />
+                <span>refinORE</span>
+              </a>
+              {' and '}
+              <a
+                href="https://github.com/Kriptikz"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <img 
+                  src="/kriptikz-logo.jpg" 
+                  alt="Kriptikz" 
+                  className="h-4 w-4 rounded inline"
+                />
+                <span>Kriptikz</span>
+              </a>
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -1179,23 +1689,7 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
           <div className="mb-4">
             <h1 className="text-3xl font-bold text-slate-100 mb-1">Protocol Revenue</h1>
             <p className="text-slate-400 text-sm">
-              Protocol revenue is defined as 10% of mining rewards and 1% of deployed SOL admin fees, since October 28th, 2025. (
-              <a
-                href="https://refinore.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-400 transition-colors"
-              >
-                charts by
-                <img 
-                  src="/refinore-logo.png" 
-                  alt="refinORE" 
-                  className="h-5 w-auto object-contain inline"
-                  style={{ maxWidth: '80px' }}
-                />
-                refinORE.com
-              </a>
-              )
+              Protocol revenue is defined as 10% of mining rewards and 1% of deployed SOL admin fees, since October 28th, 2025.
             </p>
           </div>
 
@@ -1455,42 +1949,6 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
                 )}
               </div>
 
-              {/* Chart Data Credit - refinORE.com */}
-              <div className="w-full flex items-center justify-center pt-4 mb-2 -mx-4 px-4">
-                <a
-                  href="https://refinore.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-400 transition-colors"
-                >
-                  <span>Chart breakdowns by</span>
-                  <img 
-                    src="/refinore-logo.png" 
-                    alt="refinORE" 
-                    className="h-5 w-auto object-contain"
-                    style={{ maxWidth: '80px' }}
-                  />
-                  <span className="text-slate-400">refinORE.com</span>
-                </a>
-              </div>
-
-              {/* Powered By - Full width */}
-              <div className="w-full flex items-center justify-center pt-6 mt-6 border-t border-slate-700 -mx-4 px-4">
-                <a
-                  href="https://github.com/Kriptikz"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-400 transition-colors"
-                >
-                  <span>Powered by</span>
-                  <img 
-                    src="/kriptikz-logo.jpg" 
-                    alt="Kriptikz" 
-                    className="w-5 h-5 rounded"
-                  />
-                  <span className="text-slate-400">Kriptikz</span>
-                </a>
-              </div>
             </>
           ) : (
             <div className="flex items-center justify-center py-20">
@@ -1499,6 +1957,41 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
               </div>
             </div>
           )}
+
+          {/* Footer Credit - refinORE.com and Kriptikz */}
+          <div className="mt-8 pt-6 border-t border-slate-700/50">
+            <p className="text-center text-slate-500 text-sm">
+              Data provided by{' '}
+                <a
+                  href="https://refinore.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+                >
+                  <img 
+                    src="/refinore-logo.png" 
+                    alt="refinORE" 
+                  className="h-4 w-auto object-contain inline"
+                  style={{ maxWidth: '60px' }}
+                  />
+                <span>refinORE</span>
+                </a>
+              {' and '}
+                <a
+                  href="https://github.com/Kriptikz"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+                >
+                  <img 
+                    src="/kriptikz-logo.jpg" 
+                    alt="Kriptikz" 
+                  className="h-4 w-4 rounded inline"
+                  />
+                <span>Kriptikz</span>
+                </a>
+            </p>
+              </div>
         </div>
       </div>
     );
@@ -1506,6 +1999,21 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
 
   // Inflation View
   if (currentView === 'inflation') {
+    // Format relative time helper
+    const formatRelativeTime = (timestamp: string): string => {
+      const now = new Date();
+      const time = new Date(timestamp);
+      const diffMs = now.getTime() - time.getTime();
+      const diffMins = Math.floor(diffMs / (1000 * 60));
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+      if (diffMins < 1) return 'just now';
+      if (diffMins < 60) return `${diffMins} min ago`;
+      if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+      return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+    };
+
     return (
       <div className="min-h-screen bg-black py-8 px-4">
         <div className="max-w-7xl mx-auto">
@@ -1513,23 +2021,7 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
           <div className="mb-4">
             <h1 className="text-3xl font-bold text-slate-100 mb-1">ORE Inflation Tracker</h1>
             <p className="text-slate-400 text-sm">
-              Real-time monitoring of ORE token supply, withdrawals, and buyback activity (
-              <a
-                href="https://refinore.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-400 transition-colors"
-              >
-                charts by
-                <img 
-                  src="/refinore-logo.png" 
-                  alt="refinORE" 
-                  className="h-5 w-auto object-contain inline"
-                  style={{ maxWidth: '80px' }}
-                />
-                refinORE.com
-              </a>
-              )
+              Real-time monitoring of ORE token supply, withdrawals, and buyback activity
             </p>
           </div>
 
@@ -1605,6 +2097,102 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
                     {formatOre(inflationCurrent.netMarketInflation24h)}
                   </p>
                   <p className="text-slate-500 text-sm mb-3">Withdrawn - Buyback</p>
+                </div>
+              </div>
+
+              {/* Buybacks Table */}
+              <div className="mb-4 bg-[#21252C] border border-slate-700 rounded-lg p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-xl font-semibold text-white mb-1">Buybacks</h2>
+                    <p className="text-slate-400 text-sm">
+                      Recent buyback transactions. The 90% gets "buried" and the 10% goes to staking.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 text-sm">Show:</span>
+                    {[5, 10, 15, 20].map((count) => (
+                      <button
+                        key={count}
+                        onClick={() => setBuybacksShowCount(count)}
+                        className={`px-3 py-1 text-sm rounded transition-colors ${
+                          buybacksShowCount === count
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                        }`}
+                      >
+                        {count}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {buybacksLoading ? (
+                  <div className="flex items-center justify-center py-10">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-400"></div>
+                  </div>
+                ) : buybacks.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-slate-700">
+                          <th className="text-left py-3 text-sm font-semibold text-slate-400">Time</th>
+                          <th className="text-right py-3 text-sm font-semibold text-slate-400">SOL Spent</th>
+                          <th className="text-right py-3 text-sm font-semibold text-slate-400">ORE Buried</th>
+                          <th className="text-right py-3 text-sm font-semibold text-slate-400">Staking yield</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {buybacks.slice(0, buybacksShowCount).map((buyback, idx) => (
+                          <tr key={idx} className="border-b border-slate-700/50">
+                            <td className="py-3 text-sm text-slate-200">
+                              {formatRelativeTime(buyback.timestamp)}
+                            </td>
+                            <td className="py-3 text-sm text-slate-200 text-right">
+                              <span className="flex items-center justify-end gap-1">
+                                <span>≈</span>
+                                <SolanaLogo width={14} height={14} className="inline" />
+                                <span>{buyback.solSpent.toFixed(4)}</span>
+                              </span>
+                            </td>
+                            <td className="py-3 text-sm text-slate-200 text-right">
+                              <span className="flex items-center justify-end gap-1">
+                                <img 
+                                  src="/orelogo.jpg" 
+                                  alt="ORE" 
+                                  className="w-3 h-3 object-contain rounded inline"
+                                />
+                                <span>{buyback.oreBuried.toFixed(4)}</span>
+                              </span>
+                            </td>
+                            <td className="py-3 text-sm text-slate-200 text-right">
+                              <span className="flex items-center justify-end gap-1">
+                                <img 
+                                  src="/orelogo.jpg" 
+                                  alt="ORE" 
+                                  className="w-3 h-3 object-contain rounded inline"
+                                />
+                                <span>{buyback.stakingYield.toFixed(4)}</span>
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center py-10">
+                    <p className="text-slate-400">No buyback data available</p>
+                  </div>
+                )}
+                <div className="mt-4 text-right">
+                  <a
+                    href="https://refinore.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-slate-500 hover:text-slate-400 transition-colors"
+                  >
+                    refinore.com
+                  </a>
                 </div>
               </div>
 
@@ -1707,6 +2295,84 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
                       </ResponsiveContainer>
                     </div>
                   </div>
+
+                  {/* Buyback Balance History Chart */}
+                  {buybackChartData.length > 0 && (
+                    <div className="mb-4 bg-[#21252C] border border-slate-700 rounded-lg p-5">
+                      <h2 className="text-xl font-semibold text-white mb-2">Buyback Balance History</h2>
+                      <p className="text-slate-400 text-sm mb-4">
+                        Cumulative ORE removed from circulation through buybacks over time. Shows both buried ORE (90%) and staking yield (10%).
+                      </p>
+                      <div className="h-80 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart 
+                            data={buybackChartData}
+                            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis 
+                              dataKey="date" 
+                              stroke="#9CA3AF"
+                              style={{ fontSize: '12px' }}
+                              interval="preserveStartEnd"
+                              tick={{ fill: '#9CA3AF' }}
+                              angle={-45}
+                              textAnchor="end"
+                              height={80}
+                            />
+                            <YAxis 
+                              stroke="#9CA3AF"
+                              style={{ fontSize: '12px' }}
+                              tick={{ fill: '#9CA3AF' }}
+                              label={{ value: 'ORE', angle: -90, position: 'insideLeft', style: { fill: '#9CA3AF' } }}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#1F2937',
+                                border: '1px solid #374151',
+                                borderRadius: '8px',
+                                color: '#F3F4F6'
+                              }}
+                              formatter={(value: number, name: string) => {
+                                if (name === 'cumulativeOreBuried') return [`${formatOre(value)} ORE`, 'Cumulative Buried'];
+                                if (name === 'cumulativeStakingYield') return [`${formatOre(value)} ORE`, 'Cumulative Staking Yield'];
+                                if (name === 'totalOre') return [`${formatOre(value)} ORE`, 'Total ORE Removed'];
+                                return [`${formatOre(value)}`, name];
+                              }}
+                            />
+                            <Legend />
+                            <Line 
+                              type="monotone" 
+                              dataKey="cumulativeOreBuried" 
+                              stroke="#10b981" 
+                              strokeWidth={2}
+                              name="Cumulative Buried (90%)"
+                              dot={false}
+                              isAnimationActive={false}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="cumulativeStakingYield" 
+                              stroke="#3b82f6" 
+                              strokeWidth={2}
+                              name="Cumulative Staking Yield (10%)"
+                              dot={false}
+                              isAnimationActive={false}
+                            />
+                            <Line 
+                              type="monotone" 
+                              dataKey="totalOre" 
+                              stroke="#f59e0b" 
+                              strokeWidth={2}
+                              name="Total ORE Removed"
+                              dot={false}
+                              isAnimationActive={false}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Round Breakdown Donut Charts */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1958,46 +2624,998 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
           )}
         </div>
         
-        {/* Chart Data Credit - refinORE.com */}
-        <div className="w-full flex items-center justify-center pt-4 mb-2 -mx-4 px-4">
+        {/* Footer Credit - refinORE.com and Kriptikz */}
+        <div className="mt-8 pt-6 border-t border-slate-700/50">
+          <p className="text-center text-slate-500 text-sm">
+            Data provided by{' '}
           <a
             href="https://refinore.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-400 transition-colors"
+              className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
           >
-            <span>Chart breakdowns by</span>
             <img 
               src="/refinore-logo.png" 
               alt="refinORE" 
-              className="h-6 w-auto object-contain"
-              style={{ maxWidth: '100px' }}
+                className="h-4 w-auto object-contain inline"
+                style={{ maxWidth: '60px' }}
             />
-            <span className="text-slate-400">refinORE.com</span>
+              <span>refinORE</span>
           </a>
-        </div>
-        
-        {/* Powered By - Bottom of inflation page - Full width */}
-        <div className="w-full flex items-center justify-center pt-6 mt-6 border-t border-slate-700 -mx-4 px-4">
+            {' and '}
           <a
             href="https://github.com/Kriptikz"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 text-xs text-slate-500 hover:text-slate-400 transition-colors"
+              className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
           >
-            <span>Powered by</span>
             <img 
               src="/kriptikz-logo.jpg" 
               alt="Kriptikz" 
-              className="w-5 h-5 rounded"
+                className="h-4 w-4 rounded inline"
             />
-            <span className="text-slate-400">Kriptikz</span>
+              <span>Kriptikz</span>
           </a>
+          </p>
         </div>
       </div>
     );
   }
 
+  // Staking APR View
+  if (currentView === 'staking') {
+
+    return (
+      <div className="min-h-screen bg-black py-8 px-4">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="mb-4">
+            <h1 className="text-3xl font-bold text-slate-100 mb-1">Staking APR</h1>
+          </div>
+
+          {error && (
+            <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4 text-red-400 mb-4">
+              Error: {error}
+            </div>
+          )}
+
+          {(stakingLoading || (!stakingMetricsNow && !error && stakingMetricsHistory.length === 0)) ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-400 mx-auto mb-4"></div>
+                <p className="text-slate-400">Loading staking metrics...</p>
+              </div>
+            </div>
+          ) : error && !stakingMetricsNow && stakingMetricsHistory.length === 0 ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-red-400 mb-2">Failed to load staking metrics</p>
+                <p className="text-slate-400 text-sm">{error}</p>
+              </div>
+            </div>
+          ) : stakingMetricsNow ? (
+            <>
+              {/* Statistics Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+                {/* STAKING APR Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">STAKING APR</h3>
+                  <p className="text-3xl font-bold text-white mb-1">
+                    {stakingMetricsNow.apr_annualized?.toFixed(2) || '0.00'}%
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">7-day rolling average</p>
+                </div>
+
+                {/* APY Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">APY</h3>
+                  <p className="text-3xl font-bold text-white mb-1">
+                    {calculateAPY(stakingMetricsNow.apr_annualized || 0).toFixed(2)}%
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">Compounded by claiming once per day</p>
+                </div>
+
+                {/* R24h (DAILY %) Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">R24h (DAILY %)</h3>
+                  <p className="text-3xl font-bold text-white mb-1">
+                    {((stakingMetricsNow.r_24h || 0) * 100).toFixed(2)}%
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">24-hour return rate</p>
+                </div>
+
+                {/* L,D STAKE FEES Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">L,D STAKE FEES</h3>
+                  <p className="text-3xl font-bold text-white mb-1 flex items-center gap-1">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-5 h-5 rounded" />
+                    {formatOre(stakingMetricsNow.L_7d || 0)}
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">Total ORE distributed (last 7 days)</p>
+                </div>
+
+                {/* STAKED ORE Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">STAKED ORE</h3>
+                  <p className="text-3xl font-bold text-white mb-1 flex items-center gap-1">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-5 h-5 rounded" />
+                    {formatOre(stakingMetricsNow.S_bar_7d || 0)}
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">Time-weighted average (7 days)</p>
+                </div>
+              </div>
+
+              {/* Chart and Table Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                {/* All-Time APR History Chart - Takes 2/3 of the width */}
+                <div className="lg:col-span-2 bg-[#21252C] border border-slate-700 rounded-lg p-5">
+                  <h2 className="text-xl font-semibold text-white mb-2">All-Time APR History (since 4th Nov)</h2>
+                  {aprChartData.length > 0 ? (
+                    <div className="h-80 w-full min-h-[320px] min-w-0" style={{ minWidth: 0 }}>
+                      {typeof window !== 'undefined' && (
+                        <ResponsiveContainer width="100%" height={320} minHeight={320}>
+                      <LineChart data={aprChartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                        <XAxis 
+                          dataKey="date" 
+                          stroke="#9CA3AF"
+                          style={{ fontSize: '12px' }}
+                          tick={{ fill: '#9CA3AF' }}
+                        />
+                        <YAxis 
+                          stroke="#9CA3AF"
+                          style={{ fontSize: '12px' }}
+                          tick={{ fill: '#9CA3AF' }}
+                          label={{ value: '%', angle: -90, position: 'insideLeft', style: { fill: '#9CA3AF' } }}
+                          domain={[0, 'dataMax + 5']}
+                            tickFormatter={(value) => `${value.toFixed(2)}%`}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: '#1F2937',
+                            border: '1px solid #374151',
+                            borderRadius: '8px',
+                            color: '#F3F4F6'
+                          }}
+                          formatter={(value: number) => [`${value.toFixed(2)}%`, 'Refinement APR']}
+                        />
+                        <Legend />
+                        <Line 
+                          type="monotone" 
+                          dataKey="apr" 
+                          stroke="#3b82f6" 
+                          strokeWidth={2}
+                          name="Refinement APR (%)"
+                          dot={false}
+                          isAnimationActive={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                      )}
+                  </div>
+                  ) : (
+                    <div className="h-80 flex items-center justify-center text-slate-400">
+                      <p>No chart data available</p>
+                </div>
+              )}
+                  {/* APY Calculation Box - Below Chart */}
+                  <div className="mt-4 p-4 bg-slate-800/50 rounded-lg">
+                    <h3 className="text-sm font-semibold text-white mb-2">APY Calculation:</h3>
+                    <p className="text-sm text-slate-300 mb-2">APY = (1 + APR/365)³⁶⁵ - 1</p>
+                    <p className="text-xs text-slate-400">
+                      This shows the annual yield if you compounded your staking rewards once per day. APY is always higher than APR when compounding occurs.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Historical APR & APY Table - Takes 1/3 of the width */}
+                {stakingMetricsHistory.length > 0 ? (
+                  <div className="bg-[#21252C] border border-slate-700 rounded-lg p-4">
+                    <h2 className="text-lg font-semibold text-white mb-3">Historical APR & APY</h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-slate-700">
+                            <th className="text-left py-2 text-xs font-semibold text-slate-400">Date</th>
+                            <th className="text-right py-2 text-xs font-semibold text-slate-400">APR</th>
+                            <th className="text-right py-2 text-xs font-semibold text-slate-400">APY</th>
+                            <th className="text-right py-2 text-xs font-semibold text-slate-400">Daily</th>
+                            <th className="text-right py-2 text-xs font-semibold text-slate-400">Fees</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...stakingMetricsHistory]
+                          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                          .map((item, idx) => {
+                            const apy = item.apy || calculateAPY(item.apr || 0);
+                            return (
+                              <tr key={idx} className="border-b border-slate-700/50">
+                                  <td className="py-2 text-xs text-slate-200">
+                                    {new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                </td>
+                                  <td className="py-2 text-xs text-blue-400 text-right">
+                                  {(item.apr || 0).toFixed(2)}%
+                                </td>
+                                  <td className="py-2 text-xs text-green-400 text-right">
+                                  {apy.toFixed(2)}%
+                                </td>
+                                  <td className="py-2 text-xs text-slate-200 text-right">
+                                    {((item.dailyReturn || 0) * 100).toFixed(2)}%
+                                </td>
+                                  <td className="py-2 text-xs text-slate-200 text-right">
+                                    <span className="inline-flex items-center gap-0.5 justify-end">
+                                      <img src="/orelogo.jpg" alt="ORE" className="w-2.5 h-2.5 object-contain rounded" />
+                                      <span className="text-[10px]">{formatOre(item.stakeFees || item.L_7d || 0)}</span>
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                  </div>
+                ) : (
+                  <div className="bg-[#21252C] border border-slate-700 rounded-lg p-4">
+                    <h2 className="text-lg font-semibold text-white mb-3">Historical APR & APY</h2>
+                    <p className="text-slate-400 text-sm">No historical staking data available yet.</p>
+                </div>
+              )}
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-slate-400">No staking metrics available</p>
+                {error && (
+                  <p className="text-red-400 text-sm mt-2">{error}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* How Staking APR Works - Always shown */}
+          <div className="mb-6 bg-[#21252C] border border-slate-700 rounded-lg p-5">
+            <h2 className="text-xl font-semibold text-white mb-4">How Staking APR Works</h2>
+            <div className="space-y-4 text-slate-300">
+              <div>
+                <h3 className="text-sm font-semibold text-white mb-2">Stake Fee Distribution</h3>
+                <p className="text-sm">
+                  10% of the ORE tokens burned when users buy them back through the protocol are redistributed to stakers as rewards.
+                </p>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white mb-2">APR Calculation</h3>
+                <p className="text-sm mb-2">The staking APR is calculated as a 7-day rolling average:</p>
+                <p className="text-sm font-mono bg-slate-800/50 p-2 rounded">
+                  APR = (L,d / S,d) × (365/7) × 100%
+                </p>
+                <ul className="text-sm mt-2 space-y-1 ml-4 list-disc">
+                  <li><strong>L,d</strong> is the total stake fees distributed over 7 days</li>
+                  <li><strong>S,d</strong> is the time-weighted average of total staked ORE</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white mb-2">Data Collection</h3>
+                <p className="text-sm">
+                  The system samples total staked ORE every 10 minutes and tracks cumulative stake fees from buyback transactions to ensure accurate APR calculations.
+                </p>
+              </div>
+              {stakingMetricsNow && (
+                <div className="mt-4 p-3 bg-slate-800/50 rounded">
+                  <p className="text-xs text-slate-400">
+                    <strong>Note:</strong> Current data window: {stakingMetricsNow.actualDays?.toFixed(2) || '0.00'} days ({stakingMetricsNow.samples?.count || 0} samples).{' '}
+                    {stakingMetricsNow.actualDays < 7 ? 'Full 7-day average will be available once the system has accumulated enough data.' : 'Full 7-day average is available.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer Credit - refinORE.com and Kriptikz */}
+          <div className="mt-8 pt-6 border-t border-slate-700/50">
+            <p className="text-center text-slate-500 text-sm">
+              Data provided by{' '}
+              <a
+                href="https://refinore.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <img 
+                  src="/refinore-logo.png" 
+                  alt="refinORE" 
+                  className="h-4 w-auto object-contain inline"
+                  style={{ maxWidth: '60px' }}
+                />
+                <span>refinORE</span>
+              </a>
+              {' and '}
+              <a
+                href="https://github.com/Kriptikz"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <img 
+                  src="/kriptikz-logo.jpg" 
+                  alt="Kriptikz" 
+                  className="h-4 w-4 rounded inline"
+                />
+                <span>Kriptikz</span>
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Unrefined Staking View
+  if (currentView === 'unrefined') {
+    return (
+      <div className="min-h-screen bg-black py-8 px-4">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="mb-4">
+            <h1 className="text-3xl font-bold text-slate-100 mb-1">Unrefined Staking</h1>
+          </div>
+
+          {error && (
+            <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4 text-red-400 mb-4">
+              Error: {error}
+            </div>
+          )}
+
+          {(unrefinedLoading || (!unrefinedMetricsNow && !error && unrefinedMetricsHistory.length === 0)) ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-400 mx-auto mb-4"></div>
+                <p className="text-slate-400">Loading unrefined metrics...</p>
+              </div>
+            </div>
+          ) : error && !unrefinedMetricsNow && unrefinedMetricsHistory.length === 0 ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-red-400 mb-2">Failed to load unrefined metrics</p>
+                <p className="text-slate-400 text-sm">{error}</p>
+              </div>
+            </div>
+          ) : unrefinedMetricsNow ? (
+            <>
+              {/* Statistics Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                {/* APR (ANNUALIZED) Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">APR (ANNUALIZED)</h3>
+                  <p className="text-3xl font-bold text-blue-400 mb-1">
+                    {unrefinedMetricsNow.apr_annualized?.toFixed(2) || '0.00'}%
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">7-day rolling average</p>
+                </div>
+
+                {/* R24h (DAILY %) Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">R₂₄h (DAILY %)</h3>
+                  <p className="text-3xl font-bold text-white mb-1">
+                    {((unrefinedMetricsNow.r_24h || 0) * 100).toFixed(2)}%
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">24-hour return rate</p>
+                </div>
+
+                {/* L,D HAIRCUTS Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">L,D HAIRCUTS</h3>
+                  <p className="text-3xl font-bold text-white mb-1 flex items-center gap-1">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-5 h-5 rounded" />
+                    {formatOre(unrefinedMetricsNow.L_7d || 0)}
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">Total ORE redistributed (last {unrefinedMetricsNow.actualDays?.toFixed(1) || '7.0'} days)</p>
+                </div>
+
+                {/* UNCLAIMED Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">UNCLAIMED</h3>
+                  <p className="text-3xl font-bold text-white mb-1 flex items-center gap-1">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-5 h-5 rounded" />
+                    {formatOre(unrefinedMetricsNow.U_bar_7d || 0)}
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">Time-weighted average (7 days)</p>
+                </div>
+              </div>
+
+              {/* Chart and Table Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+                {/* All-Time APR History Chart - Takes 2/3 of the width */}
+                <div className="lg:col-span-2 bg-[#21252C] border border-slate-700 rounded-lg p-5">
+                  <h2 className="text-xl font-semibold text-white mb-2">All-Time APR History (since 4th Nov)</h2>
+                  {unrefinedAprChartData.length > 0 ? (
+                    <div className="h-80 w-full min-h-[320px] min-w-0" style={{ minWidth: 0 }}>
+                      {typeof window !== 'undefined' && (
+                        <ResponsiveContainer width="100%" height={320} minHeight={320}>
+                        <LineChart data={unrefinedAprChartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                          <XAxis 
+                            dataKey="date" 
+                            stroke="#9CA3AF"
+                            style={{ fontSize: '12px' }}
+                            tick={{ fill: '#9CA3AF' }}
+                          />
+                          <YAxis 
+                            stroke="#9CA3AF"
+                            style={{ fontSize: '12px' }}
+                            tick={{ fill: '#9CA3AF' }}
+                            label={{ value: '%', angle: -90, position: 'insideLeft', style: { fill: '#9CA3AF' } }}
+                            domain={[0, 'dataMax + 5']}
+                            tickFormatter={(value) => `${value.toFixed(2)}%`}
+                          />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: '#1F2937',
+                              border: '1px solid #374151',
+                              borderRadius: '8px',
+                              color: '#F3F4F6'
+                            }}
+                            formatter={(value: number) => [`${value.toFixed(2)}%`, 'Refinement APR']}
+                          />
+                          <Legend />
+                          <Line 
+                            type="monotone" 
+                            dataKey="apr" 
+                            stroke="#3b82f6" 
+                            strokeWidth={2}
+                            name="Refinement APR (%)"
+                            dot={false}
+                            isAnimationActive={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="h-80 flex items-center justify-center text-slate-400">
+                      <p>No chart data available</p>
+                    </div>
+                  )}
+                  {/* APY Calculation Box - Below Chart */}
+                  <div className="mt-4 p-4 bg-slate-800/50 rounded-lg">
+                    <h3 className="text-sm font-semibold text-white mb-2">APY Calculation:</h3>
+                    <p className="text-sm text-slate-300 mb-2">APY = (1 + APR/365)³⁶⁵ - 1</p>
+                    <p className="text-xs text-slate-400">
+                      This shows the annual yield if you compounded your staking rewards once per day. APY is always higher than APR when compounding occurs.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Historical APR & APY Table - Takes 1/3 of the width */}
+                {unrefinedMetricsHistory.length > 0 ? (
+                  <div className="bg-[#21252C] border border-slate-700 rounded-lg p-4">
+                    <h2 className="text-lg font-semibold text-white mb-3">Historical APR & APY</h2>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-slate-700">
+                            <th className="text-left py-2 text-xs font-semibold text-slate-400">Date</th>
+                            <th className="text-right py-2 text-xs font-semibold text-slate-400">APR</th>
+                            <th className="text-right py-2 text-xs font-semibold text-slate-400">APY</th>
+                            <th className="text-right py-2 text-xs font-semibold text-slate-400">Daily</th>
+                            <th className="text-right py-2 text-xs font-semibold text-slate-400">Haircuts</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...unrefinedMetricsHistory]
+                            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                            .map((item, idx) => {
+                              const apy = item.apy || calculateAPY(item.apr || 0);
+                              return (
+                                <tr key={idx} className="border-b border-slate-700/50">
+                                  <td className="py-2 text-xs text-slate-200">
+                                    {new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  </td>
+                                  <td className="py-2 text-xs text-blue-400 text-right">
+                                    {(item.apr || 0).toFixed(2)}%
+                                  </td>
+                                  <td className="py-2 text-xs text-green-400 text-right">
+                                    {apy.toFixed(2)}%
+                                  </td>
+                                  <td className="py-2 text-xs text-slate-200 text-right">
+                                    {((item.dailyReturn || 0) * 100).toFixed(2)}%
+                                  </td>
+                                  <td className="py-2 text-xs text-slate-200 text-right">
+                                    <span className="inline-flex items-center gap-0.5 justify-end">
+                                      <img src="/orelogo.jpg" alt="ORE" className="w-2.5 h-2.5 object-contain rounded" />
+                                      <span className="text-[10px]">{formatOre(item.haircuts || item.L_7d || 0)}</span>
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-[#21252C] border border-slate-700 rounded-lg p-4">
+                    <h2 className="text-lg font-semibold text-white mb-3">Historical APR & APY</h2>
+                    <p className="text-slate-400 text-sm">No historical unrefined data available yet.</p>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-slate-400">No unrefined metrics available</p>
+                {error && (
+                  <p className="text-red-400 text-sm mt-2">{error}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Footer Credit - refinORE.com and Kriptikz */}
+          <div className="mt-8 pt-6 border-t border-slate-700/50">
+            <p className="text-center text-slate-500 text-sm">
+              Data provided by{' '}
+              <a
+                href="https://refinore.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <img 
+                  src="/refinore-logo.png" 
+                  alt="refinORE" 
+                  className="h-4 w-auto object-contain inline"
+                  style={{ maxWidth: '60px' }}
+                />
+                <span>refinORE</span>
+              </a>
+              {' and '}
+              <a
+                href="https://github.com/Kriptikz"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <img 
+                  src="/kriptikz-logo.jpg" 
+                  alt="Kriptikz" 
+                  className="h-4 w-4 rounded inline"
+                />
+                <span>Kriptikz</span>
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Liquidity View
+  if (currentView === 'liquidity') {
+
+    // Format currency helper
+    const formatCurrency = (value: number) => {
+      if (value >= 1000000) {
+        return `$${(value / 1000000).toFixed(2)}M`;
+      } else if (value >= 1000) {
+        return `$${(value / 1000).toFixed(2)}K`;
+      }
+      return `$${value.toFixed(2)}`;
+    };
+
+    // Get current price from token data if available
+    const currentPrice = tokenCurrent?.priceUsd || 0;
+
+    return (
+      <div className="min-h-screen bg-black py-8 px-4">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="mb-4">
+            <h1 className="text-3xl font-bold text-slate-100 mb-1">ORE Liquidity</h1>
+            <p className="text-slate-400 text-sm">
+              Track total liquidity and trading volume across all Solana DEXs for the last 30 days
+            </p>
+          </div>
+
+          {error && (
+            <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4 text-red-400 mb-4">
+              Error: {error}
+            </div>
+          )}
+
+          {(liquidityLoading || (!error && (!Array.isArray(liquidityDexData) || liquidityDexData.length === 0))) ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-400 mx-auto mb-4"></div>
+                <p className="text-slate-400">Loading liquidity data...</p>
+              </div>
+            </div>
+          ) : error && (!Array.isArray(liquidityDexData) || liquidityDexData.length === 0) ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-red-400 mb-2">Failed to load liquidity data</p>
+                <p className="text-slate-400 text-sm">{error}</p>
+              </div>
+            </div>
+          ) : Array.isArray(liquidityDexData) && liquidityDexData.length > 0 ? (
+            <>
+              {/* Key Statistics Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                {/* Total Liquidity Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <div className="absolute top-4 right-4">
+                    <SolanaLogo width={20} height={20} />
+                  </div>
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">Total Liquidity</h3>
+                  <p className="text-3xl font-bold text-white mb-1">
+                    {formatCurrency(totalLiquidity)}
+                  </p>
+                  {solPrice && totalLiquidity > 0 && (
+                    <p className="text-slate-500 text-xs mb-3 flex items-center gap-1">
+                      <SolanaLogo width={12} height={12} className="inline" />
+                      {(totalLiquidity / solPrice).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 })} SOL
+                    </p>
+                  )}
+                </div>
+
+                {/* 24h Volume Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <div className="absolute top-4 right-4">
+                    <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">24h Volume</h3>
+                  <p className="text-3xl font-bold text-white mb-1">
+                    {formatCurrency(totalVolume24h)}
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">Across all pools</p>
+                </div>
+
+                {/* Current Price Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <div className="absolute top-4 right-4">
+                    <img 
+                      src="/orelogo.jpg" 
+                      alt="ORE" 
+                      className="w-5 h-5 object-contain rounded"
+                    />
+                  </div>
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">Current Price</h3>
+                  <div className="flex items-center gap-2 mb-1">
+                    <img 
+                      src="/orelogo.jpg" 
+                      alt="ORE" 
+                      className="w-6 h-6 object-contain rounded"
+                    />
+                    <p className="text-3xl font-bold text-white">
+                    ${currentPrice.toFixed(2)}
+                  </p>
+                  </div>
+                  <p className="text-slate-500 text-xs mb-3">ORE/USD</p>
+                </div>
+
+                {/* Active Pools Card */}
+                <div className="bg-[#21252C] border border-blue-400/50 rounded-lg p-5 relative">
+                  <div className="absolute top-4 right-4">
+                    <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-slate-400 text-sm font-medium mb-2">Active Pools</h3>
+                  <p className="text-3xl font-bold text-white mb-1">
+                    {totalPools}
+                  </p>
+                  <p className="text-slate-500 text-xs mb-3">Across all DEXs</p>
+                </div>
+              </div>
+
+              {/* Chart and Table Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+                {/* Liquidity & Price Over Time Chart - Takes 2/3 of the width */}
+                <div className="lg:col-span-2 bg-[#21252C] border border-slate-700 rounded-lg p-5">
+                  <div className="flex items-center gap-2 mb-2">
+                    <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    <h2 className="text-xl font-semibold text-white">Liquidity & Price Over Time (Last 30 Days)</h2>
+                  </div>
+                  <p className="text-slate-400 text-sm mb-3">
+                    Shows correlation between total liquidity (cyan) and ORE price (gold). Real-time hourly data collection.
+                  </p>
+                  {liquidityPriceChartData.length > 0 ? (
+                    <div className="h-96 w-full min-h-[384px] min-w-0" style={{ minWidth: 0 }}>
+                      {typeof window !== 'undefined' && (
+                        <ResponsiveContainer width="100%" height={384} minHeight={384}>
+                          <ComposedChart data={liquidityPriceChartData} margin={{ top: 10, right: 35, left: 25, bottom: 80 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.5} />
+                            <XAxis 
+                              dataKey="date" 
+                              stroke="#94a3b8"
+                              tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 400 }}
+                              angle={-45}
+                              textAnchor="end"
+                              height={60}
+                              interval="preserveStartEnd"
+                              minTickGap={60}
+                              tickMargin={8}
+                            />
+                            {/* Left Y-Axis - Total Liquidity (USD) */}
+                            <YAxis 
+                              yAxisId="left"
+                              orientation="left"
+                              stroke="#06b6d4"
+                              tick={{ fill: '#06b6d4', fontSize: 11, fontWeight: 400 }}
+                              label={{ 
+                                value: 'Total Liquidity (USD)', 
+                                angle: -90, 
+                                position: 'insideLeft', 
+                                offset: -5,
+                                style: { fill: '#06b6d4', fontSize: '11px', fontWeight: '500', textAnchor: 'middle' } 
+                              }}
+                              domain={['dataMin - (dataMax - dataMin) * 0.05', 'dataMax + (dataMax - dataMin) * 0.05']}
+                              tickFormatter={(value) => {
+                                if (value >= 1000000) {
+                                  const millions = value / 1000000;
+                                  // Show 2 decimal places for millions, format cleanly
+                                  if (millions % 1 === 0) {
+                                    return `$${millions.toFixed(0)}M`;
+                                  } else if (millions % 0.1 === 0) {
+                                    return `$${millions.toFixed(1)}M`;
+                                  } else {
+                                    return `$${millions.toFixed(2)}M`;
+                                  }
+                                }
+                                if (value >= 1000) {
+                                  const thousands = value / 1000;
+                                  // Show 1 decimal place for thousands, format cleanly
+                                  if (thousands % 1 === 0) {
+                                    return `$${thousands.toFixed(0)}K`;
+                                  } else {
+                                    return `$${thousands.toFixed(1)}K`;
+                                  }
+                                }
+                                return `$${Math.round(value)}`;
+                              }}
+                              width={80}
+                              tickCount={5}
+                              allowDecimals={false}
+                            />
+                            {/* Right Y-Axis - ORE Price (USD) */}
+                            <YAxis 
+                              yAxisId="right"
+                              orientation="right"
+                              stroke="#fbbf24"
+                              tick={{ fill: '#fbbf24', fontSize: 11, fontWeight: 400 }}
+                              label={{ 
+                                value: 'ORE Price (USD)', 
+                                angle: 90, 
+                                position: 'insideRight', 
+                                offset: -5,
+                                style: { fill: '#fbbf24', fontSize: '11px', fontWeight: '500', textAnchor: 'middle' } 
+                              }}
+                              domain={['dataMin - (dataMax - dataMin) * 0.05', 'dataMax + (dataMax - dataMin) * 0.05']}
+                              tickFormatter={(value) => {
+                                // Format price cleanly - round to nearest dollar
+                                return `$${Math.round(value)}`;
+                              }}
+                              width={80}
+                              tickCount={5}
+                              allowDecimals={false}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#1F2937',
+                                border: '1px solid #374151',
+                                borderRadius: '8px',
+                                color: '#F3F4F6',
+                                padding: '12px',
+                                boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)'
+                              }}
+                              labelStyle={{ color: '#94a3b8', marginBottom: '8px', fontSize: '12px', fontWeight: '600' }}
+                              formatter={(value: number, name: string) => {
+                                if (name === 'totalLiquidity') {
+                                  return [formatCurrency(value), 'Total Liquidity (USD)'];
+                                }
+                                if (name === 'priceUsd') {
+                                  return [`$${value.toFixed(2)}`, 'ORE Price (USD)'];
+                                }
+                                return [value, name];
+                              }}
+                              labelFormatter={(label) => {
+                                // Try to parse and format the date better for tooltip
+                                try {
+                                  // If it's already a formatted date string, return it
+                                  return label;
+                                } catch {
+                                  return `Date: ${label}`;
+                                }
+                              }}
+                            />
+                            <Legend 
+                              wrapperStyle={{ paddingTop: '20px', paddingBottom: '0px' }}
+                              iconType="line"
+                              align="center"
+                              verticalAlign="bottom"
+                              content={({ payload }) => (
+                                <div className="flex items-center justify-center gap-8 flex-wrap">
+                                  {payload?.map((entry, index) => (
+                                    <div key={index} className="flex items-center gap-2">
+                                      <div 
+                                        className="w-4 h-0.5" 
+                                        style={{ backgroundColor: entry.color as string }}
+                                      />
+                                      {entry.dataKey === 'totalLiquidity' && (
+                                        <span className="text-xs text-slate-300 flex items-center gap-1.5">
+                                          <SolanaLogo width={12} height={12} />
+                                          Total Liquidity (USD)
+                                        </span>
+                                      )}
+                                      {entry.dataKey === 'priceUsd' && (
+                                        <span className="text-xs text-slate-300 flex items-center gap-1.5">
+                                          <img 
+                                            src="/orelogo.jpg" 
+                                            alt="ORE" 
+                                            className="w-3 h-3 object-contain rounded"
+                                          />
+                                          ORE Price (USD)
+                                        </span>
+                                      )}
+                                      {entry.dataKey !== 'totalLiquidity' && entry.dataKey !== 'priceUsd' && (
+                                        <span className="text-xs text-slate-300">{entry.value as string}</span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            />
+                            {/* Total Liquidity Line - Cyan */}
+                            <Line 
+                              yAxisId="left"
+                              type="monotone" 
+                              dataKey="totalLiquidity" 
+                              stroke="#06b6d4" 
+                              strokeWidth={2.5}
+                              name="totalLiquidity"
+                              dot={false}
+                              isAnimationActive={false}
+                              activeDot={{ r: 5, fill: '#06b6d4', stroke: '#0891b2', strokeWidth: 2 }}
+                            />
+                            {/* ORE Price Line - Gold */}
+                            <Line 
+                              yAxisId="right"
+                              type="monotone" 
+                              dataKey="priceUsd" 
+                              stroke="#fbbf24" 
+                              strokeWidth={2.5}
+                              name="priceUsd"
+                              dot={false}
+                              isAnimationActive={false}
+                              activeDot={{ r: 5, fill: '#fbbf24', stroke: '#f59e0b', strokeWidth: 2 }}
+                            />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  ) : liquidityHistoryLoading ? (
+                    <div className="h-96 flex items-center justify-center">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-400 mx-auto mb-4"></div>
+                        <p className="text-slate-400">Loading chart data...</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-96 flex items-center justify-center text-slate-400">
+                      <p>No chart data available. Chart will populate as data is collected.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Liquidity by DEX Table - Takes 1/3 of the width */}
+                <div className="bg-[#21252C] border border-slate-700 rounded-lg p-4">
+                  <h2 className="text-lg font-semibold text-white mb-1">Liquidity by DEX</h2>
+                  <p className="text-slate-400 text-xs mb-3">Current liquidity distribution across decentralized exchanges</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-700">
+                          <th className="text-left py-2 text-xs font-semibold text-slate-400">DEX</th>
+                          <th className="text-right py-2 text-xs font-semibold text-slate-400">Liquidity</th>
+                          <th className="text-right py-2 text-xs font-semibold text-slate-400">Volume 24h</th>
+                          <th className="text-right py-2 text-xs font-semibold text-slate-400">Pools</th>
+                          <th className="text-right py-2 text-xs font-semibold text-slate-400">%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {liquidityDexData
+                        .sort((a, b) => b.liquidityUsd - a.liquidityUsd)
+                        .map((dex, idx) => {
+                          const percentOfTotal = totalLiquidity > 0 ? (dex.liquidityUsd / totalLiquidity) * 100 : 0;
+                          return (
+                            <tr 
+                              key={idx} 
+                              className={`border-b border-slate-700/50 ${dex.liquidityUsd === 0 ? 'bg-teal-500/10' : ''}`}
+                            >
+                                <td className="py-2 text-xs text-slate-200">
+                                  {dex.dexName}
+                              </td>
+                                <td className="py-2 text-xs text-slate-200 text-right">
+                                  <div className="flex flex-col items-end">
+                                    <span className="text-[11px]">{formatCurrency(dex.liquidityUsd)}</span>
+                                    {solPrice && dex.liquidityUsd > 0 && (
+                                      <span className="text-[10px] text-slate-400 flex items-center gap-0.5 mt-0.5">
+                                        <SolanaLogo width={8} height={8} className="inline" />
+                                        {(dex.liquidityUsd / solPrice).toLocaleString('en-US', { maximumFractionDigits: 1, minimumFractionDigits: 1 })} SOL
+                                      </span>
+                                    )}
+                                  </div>
+                              </td>
+                                <td className="py-2 text-xs text-slate-200 text-right">
+                                {formatCurrency(dex.volume24h)}
+                              </td>
+                                <td className="py-2 text-xs text-slate-200 text-right">
+                                {dex.poolCount}
+                              </td>
+                                <td className="py-2 text-xs text-slate-200 text-right">
+                                {percentOfTotal.toFixed(1)}%
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center py-20">
+              <div className="text-center">
+                <p className="text-slate-400">No liquidity data available</p>
+              </div>
+            </div>
+          )}
+
+          {/* Footer Credit - refinORE.com and Kriptikz */}
+          <div className="mt-8 pt-6 border-t border-slate-700/50">
+            <p className="text-center text-slate-500 text-sm">
+              Data provided by{' '}
+              <a
+                href="https://refinore.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <img 
+                  src="/refinore-logo.png" 
+                  alt="refinORE" 
+                  className="h-4 w-auto object-contain inline"
+                  style={{ maxWidth: '60px' }}
+                />
+                <span>refinORE</span>
+              </a>
+              {' and '}
+              <a
+                href="https://github.com/Kriptikz"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors"
+              >
+                <img 
+                  src="/kriptikz-logo.jpg" 
+                  alt="Kriptikz" 
+                  className="h-4 w-4 rounded inline"
+                />
+                <span>Kriptikz</span>
+              </a>
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black py-8 px-4">
@@ -2201,6 +3819,96 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
                     </>
                   ) : null}
                 </div>
+              </div>
+
+              {/* Buybacks Table */}
+              <div className="bg-[#21252C] rounded-lg p-6 border border-slate-700 mt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-xl font-semibold text-slate-100 mb-1">Buybacks</h2>
+                    <p className="text-slate-400 text-sm">Recent buyback transactions. The 90% gets "buried" and the 10% goes to staking.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-400">Show:</span>
+                    {[5, 10, 15, 20].map((count) => (
+                      <button
+                        key={count}
+                        onClick={() => setBuybackShowCount(count)}
+                        className={`px-3 py-1 text-sm rounded transition-colors ${
+                          buybackShowCount === count
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                        }`}
+                      >
+                        {count}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {buybackHistoryLoading ? (
+                  <div className="h-64 flex items-center justify-center text-slate-400">
+                    Loading buyback history...
+                  </div>
+                ) : buybackHistory.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-slate-700">
+                          <th className="text-left py-3 text-sm font-semibold text-slate-400">Time</th>
+                          <th className="text-right py-3 text-sm font-semibold text-slate-400">SOL Spent</th>
+                          <th className="text-right py-3 text-sm font-semibold text-slate-400">ORE Buried</th>
+                          <th className="text-right py-3 text-sm font-semibold text-slate-400">Staking yield</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {buybackHistory.slice(0, buybackShowCount).map((item, idx) => {
+                          const timestamp = new Date(item.timestamp);
+                          const now = new Date();
+                          const timeDiff = now.getTime() - timestamp.getTime();
+                          const minutesAgo = Math.floor(timeDiff / (1000 * 60));
+                          const hoursAgo = Math.floor(timeDiff / (1000 * 60 * 60));
+                          
+                          let timeAgo: string;
+                          if (hoursAgo >= 1) {
+                            timeAgo = `${hoursAgo} hour${hoursAgo > 1 ? 's' : ''} ago`;
+                          } else if (minutesAgo >= 1) {
+                            timeAgo = `${minutesAgo} min ago`;
+                          } else {
+                            timeAgo = 'Just now';
+                          }
+
+                          return (
+                            <tr key={idx} className="border-b border-slate-700/50">
+                              <td className="py-3 text-sm text-slate-200">{timeAgo}</td>
+                              <td className="py-3 text-sm text-slate-200 text-right">
+                                <span className="inline-flex items-center gap-1 justify-end">
+                                  <SolanaLogo width={14} height={14} />
+                                  <span>{formatSol(item.solSpent)}</span>
+                                </span>
+                              </td>
+                              <td className="py-3 text-sm text-slate-200 text-right">
+                                <span className="inline-flex items-center gap-1 justify-end">
+                                  <img src="/orelogo.jpg" alt="ORE" className="w-3 h-3 object-contain rounded" />
+                                  <span>{formatOre(item.oreBuried)}</span>
+                                </span>
+                              </td>
+                              <td className="py-3 text-sm text-slate-200 text-right">
+                                <span className="inline-flex items-center gap-1 justify-end">
+                                  <img src="/orelogo.jpg" alt="ORE" className="w-3 h-3 object-contain rounded" />
+                                  <span>{formatOre(item.stakingYield)}</span>
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center text-slate-400">
+                    No buyback data available
+                  </div>
+                )}
               </div>
             </div>
           </>

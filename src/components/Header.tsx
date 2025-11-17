@@ -3,8 +3,9 @@ import { Link, useLocation } from 'react-router-dom';
 import type { PriceSnapshot } from '../types/api';
 import { getHealth } from '../services/api';
 import { SolanaLogo } from './SolanaLogo';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 
-type View = 'dashboard' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue';
+type View = 'dashboard' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore';
 
 interface HeaderProps {
   solPrice: PriceSnapshot | null;
@@ -41,6 +42,8 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
   const [addressCopied, setAddressCopied] = useState(false);
   const [statsDropdownOpen, setStatsDropdownOpen] = useState(false);
   const [mobileStatsDropdownOpen, setMobileStatsDropdownOpen] = useState(false);
+  const [stakingSubmenuOpen, setStakingSubmenuOpen] = useState(false);
+  const [stakingSubmenuTimeout, setStakingSubmenuTimeout] = useState<number | null>(null);
   
   const DONATE_ADDRESS = '3copeQ922WcSc5uqZbESgZ3TrfnEA8UEGHJ4EvkPAtHS';
 
@@ -55,6 +58,11 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
     if (path === '/leaderboard') return 'leaderboard';
     if (path === '/strategies') return 'strategies';
     if (path === '/my-profile') return 'merch';
+    if (path === '/martingale') return 'martingale';
+    if (path === '/staking') return 'staking';
+    if (path === '/liquidity') return 'liquidity';
+    if (path === '/unrefined') return 'unrefined';
+    if (path === '/what-is-ore') return 'what-is-ore';
     return 'dashboard';
   };
 
@@ -221,7 +229,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                 <button
                   onClick={() => setStatsDropdownOpen(!statsDropdownOpen)}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                    ['treasury', 'inflation', 'token', 'revenue'].includes(activeView)
+                    ['treasury', 'inflation', 'token', 'revenue', 'strategies', 'staking', 'liquidity', 'unrefined', 'martingale'].includes(activeView)
                       ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                   }`}
@@ -242,8 +250,29 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                 {statsDropdownOpen && (
                   <div 
                     className="absolute top-full left-0 pt-1 w-48 z-50"
-                    onMouseEnter={() => setStatsDropdownOpen(true)}
-                    onMouseLeave={() => setStatsDropdownOpen(false)}
+                    onMouseEnter={() => {
+                      // Clear timeout when re-entering main dropdown
+                      if (stakingSubmenuTimeout) {
+                        clearTimeout(stakingSubmenuTimeout);
+                        setStakingSubmenuTimeout(null);
+                      }
+                      setStatsDropdownOpen(true);
+                    }}
+                    onMouseLeave={(e) => {
+                      // Check if we're moving to the staking submenu
+                      const relatedTarget = e.relatedTarget as HTMLElement;
+                      if (relatedTarget && (relatedTarget.closest('.staking-submenu-container') || relatedTarget.closest('.staking-menu-item'))) {
+                        // Moving to staking submenu or parent item, keep dropdown open
+                        return;
+                      }
+                      // Close submenu and dropdown
+                      setStakingSubmenuOpen(false);
+                      if (stakingSubmenuTimeout) {
+                        clearTimeout(stakingSubmenuTimeout);
+                        setStakingSubmenuTimeout(null);
+                      }
+                      setStatsDropdownOpen(false);
+                    }}
                   >
                     <div className="bg-black border-2 border-slate-600 rounded-lg shadow-xl">
                     <Link
@@ -280,9 +309,20 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                       Token
                     </Link>
                     <Link
+                      to="/liquidity"
+                      onClick={() => setStatsDropdownOpen(false)}
+                      className={`w-full px-4 py-2 text-left text-sm transition-colors block ${
+                        activeView === 'liquidity'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      Liquidity
+                    </Link>
+                    <Link
                       to="/inflation"
                       onClick={() => setStatsDropdownOpen(false)}
-                      className={`w-full px-4 py-2 text-left text-sm transition-colors rounded-b-lg block ${
+                      className={`w-full px-4 py-2 text-left text-sm transition-colors block ${
                         activeView === 'inflation'
                           ? 'bg-amber-500/20 text-amber-400'
                           : 'text-slate-300 hover:bg-slate-800'
@@ -290,23 +330,122 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                     >
                       Inflation
                     </Link>
+                    <div 
+                      className="relative staking-menu-item"
+                      onMouseEnter={() => {
+                        // Clear any pending timeout
+                        if (stakingSubmenuTimeout) {
+                          clearTimeout(stakingSubmenuTimeout);
+                          setStakingSubmenuTimeout(null);
+                        }
+                        setStakingSubmenuOpen(true);
+                        // Keep parent dropdown open
+                        setStatsDropdownOpen(true);
+                      }}
+                      onMouseLeave={() => {
+                        // Add a delay before closing to allow movement to submenu
+                        // The submenu will clear this timeout if mouse enters it
+                        const timeout = window.setTimeout(() => {
+                          setStakingSubmenuOpen(false);
+                        }, 300);
+                        setStakingSubmenuTimeout(timeout);
+                      }}
+                    >
+                      <div
+                        className={`w-full px-4 py-2 text-left text-sm transition-colors flex items-center justify-between ${
+                          ['staking', 'unrefined'].includes(activeView)
+                            ? 'bg-amber-500/20 text-amber-400'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <span>APR</span>
+                        <svg 
+                          className={`w-4 h-4 transition-transform ${stakingSubmenuOpen ? 'rotate-90' : ''}`}
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                      {stakingSubmenuOpen && (
+                        <div 
+                          className="staking-submenu-container absolute left-full top-0 w-48 z-50"
+                          onMouseEnter={() => {
+                            // Clear timeout when entering submenu - this prevents closing
+                            if (stakingSubmenuTimeout) {
+                              clearTimeout(stakingSubmenuTimeout);
+                              setStakingSubmenuTimeout(null);
+                            }
+                            setStakingSubmenuOpen(true);
+                            // Keep parent dropdown open
+                            setStatsDropdownOpen(true);
+                          }}
+                          onMouseLeave={() => {
+                            // Close immediately when leaving submenu (not going back to parent)
+                            setStakingSubmenuOpen(false);
+                          }}
+                          style={{ marginLeft: '-8px', paddingLeft: '8px' }}
+                        >
+                          <div className="bg-black border-2 border-slate-600 rounded-lg shadow-xl">
+                            <Link
+                              to="/staking"
+                              onClick={() => {
+                                setStatsDropdownOpen(false);
+                                setStakingSubmenuOpen(false);
+                              }}
+                              className={`w-full px-4 py-2 text-left text-sm transition-colors rounded-t-lg block ${
+                                activeView === 'staking'
+                                  ? 'bg-amber-500/20 text-amber-400'
+                                  : 'text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              Staking
+                            </Link>
+                            <Link
+                              to="/unrefined"
+                              onClick={() => {
+                                setStatsDropdownOpen(false);
+                                setStakingSubmenuOpen(false);
+                              }}
+                              className={`w-full px-4 py-2 text-left text-sm transition-colors rounded-b-lg block ${
+                                activeView === 'unrefined'
+                                  ? 'bg-amber-500/20 text-amber-400'
+                                  : 'text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              Unrefined
+                            </Link>
+                          </div>
+                        </div>
+                      )}
                     </div>
+                    <Link
+                      to="/strategies"
+                      onClick={() => setStatsDropdownOpen(false)}
+                      className={`w-full px-4 py-2 text-left text-sm transition-colors block ${
+                        activeView === 'strategies'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      Strategies / SoV
+                    </Link>
+                    <Link
+                      to="/martingale"
+                      onClick={() => setStatsDropdownOpen(false)}
+                      className={`w-full px-4 py-2 text-left text-sm transition-colors rounded-b-lg block ${
+                        activeView === 'martingale'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      Martingale Sim
+                    </Link>
+                      </div>
                   </div>
                 )}
               </div>
-              <Link
-                to="/strategies"
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                  activeView === 'strategies'
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-                Strategies / SoV
-              </Link>
             </nav>
         </div>
 
@@ -374,6 +513,11 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
             </svg>
           </a>
+
+          {/* Wallet connect (Phantom) */}
+          <div className="hidden sm:block">
+            <WalletMultiButton className="!bg-slate-800 !border !border-slate-600 !text-slate-100 hover:!bg-slate-700 !rounded-lg !px-3 !py-1.5 !text-xs" />
+          </div>
 
           {/* Donate Button */}
           <div
@@ -588,7 +732,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                   <button
                     onClick={() => setMobileStatsDropdownOpen(!mobileStatsDropdownOpen)}
                     className={`w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center justify-between gap-3 ${
-                      ['treasury', 'inflation', 'token', 'revenue'].includes(activeView)
+                      ['treasury', 'inflation', 'token', 'revenue', 'strategies', 'staking', 'liquidity', 'unrefined', 'martingale'].includes(activeView)
                         ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                     }`}
@@ -644,6 +788,17 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                         Token
                       </Link>
                       <Link
+                        to="/liquidity"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={`w-full px-4 py-2 rounded-lg text-left text-sm transition-colors block ${
+                          activeView === 'liquidity'
+                            ? 'bg-amber-500/20 text-amber-400'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                        }`}
+                      >
+                        Liquidity
+                      </Link>
+                      <Link
                         to="/inflation"
                         onClick={() => setMobileMenuOpen(false)}
                         className={`w-full px-4 py-2 rounded-lg text-left text-sm transition-colors block ${
@@ -654,23 +809,83 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard' }: Header
                       >
                         Inflation
                       </Link>
+                      <div className="space-y-1">
+                        <button
+                          onClick={() => setStakingSubmenuOpen(!stakingSubmenuOpen)}
+                          className={`w-full px-4 py-2 rounded-lg text-left text-sm transition-colors flex items-center justify-between ${
+                            ['staking', 'unrefined'].includes(activeView)
+                              ? 'bg-amber-500/20 text-amber-400'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                          }`}
+                        >
+                          <span>APR</span>
+                          <svg 
+                            className={`w-4 h-4 transition-transform flex-shrink-0 ${stakingSubmenuOpen ? 'rotate-90' : ''}`}
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </button>
+                        {stakingSubmenuOpen && (
+                          <div className="pl-4 space-y-1">
+                            <Link
+                              to="/staking"
+                              onClick={() => {
+                                setMobileMenuOpen(false);
+                                setStakingSubmenuOpen(false);
+                              }}
+                              className={`w-full px-4 py-2 rounded-lg text-left text-sm transition-colors block ${
+                                activeView === 'staking'
+                                  ? 'bg-amber-500/20 text-amber-400'
+                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                              }`}
+                            >
+                              Staking
+                            </Link>
+                            <Link
+                              to="/unrefined"
+                              onClick={() => {
+                                setMobileMenuOpen(false);
+                                setStakingSubmenuOpen(false);
+                              }}
+                              className={`w-full px-4 py-2 rounded-lg text-left text-sm transition-colors block ${
+                                activeView === 'unrefined'
+                                  ? 'bg-amber-500/20 text-amber-400'
+                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                              }`}
+                            >
+                              Unrefined
+                            </Link>
+                          </div>
+                        )}
+                      </div>
+                      <Link
+                        to="/strategies"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={`w-full px-4 py-2 rounded-lg text-left text-sm transition-colors block ${
+                          activeView === 'strategies'
+                            ? 'bg-amber-500/20 text-amber-400'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                        }`}
+                      >
+                        Strategies / SoV
+                      </Link>
+                      <Link
+                        to="/martingale"
+                        onClick={() => setMobileMenuOpen(false)}
+                        className={`w-full px-4 py-2 rounded-lg text-left text-sm transition-colors block ${
+                          activeView === 'martingale'
+                            ? 'bg-amber-500/20 text-amber-400'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                        }`}
+                      >
+                        Martingale Sim
+                      </Link>
                     </div>
                   )}
                 </div>
-                <Link
-                  to="/strategies"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className={`w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center gap-3 ${
-                    activeView === 'strategies'
-                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                  }`}
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                  </svg>
-                  Strategies / SoV
-                </Link>
               </nav>
 
               {/* X/Twitter Link and Donate Button in Mobile Menu */}

@@ -576,3 +576,424 @@ export async function getBuybackWalletBalance(): Promise<{
   }
 }
 
+/**
+ * Fetches buyback balance history
+ */
+export async function getBuybackBalanceHistory(): Promise<Array<{
+  timestamp: string;
+  solSpent: number;
+  oreBuried: number;
+  stakingYield: number;
+}>> {
+  try {
+    // Use proxy in development, serverless function in production
+    const apiUrl = import.meta.env.DEV 
+      ? '/api/inflation/buyback-balance-history'
+      : '/api/inflation/buyback-balance-history';
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch buyback balance history: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Map API response to expected format
+    return data.map((item: any) => ({
+      timestamp: item.timestamp || item.ts || item.created_at || item.time,
+      solSpent: parseFloat(item.solSpent || item.sol_spent || item.sol || 0),
+      oreBuried: parseFloat(item.oreBuried || item.ore_buried || item.ore || 0),
+      stakingYield: parseFloat(item.stakingYield || item.staking_yield || item.yield || 0),
+    }));
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach buyback history API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches buyback transactions
+ */
+export async function getBuybacks(): Promise<Array<{
+  timestamp: string;
+  solSpent: number;
+  oreBuried: number;
+  stakingYield: number;
+}>> {
+  try {
+    // Use proxy in development, serverless function in production
+    const apiUrl = import.meta.env.DEV 
+      ? '/api/inflation/buybacks'
+      : '/api/inflation/buybacks';
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch buybacks: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Map API response to expected format
+    // API returns: burnedAmount, stakingYield, solSpent, blockTime
+    return data.map((item: any) => ({
+      timestamp: item.blockTime || item.timestamp || item.ts || item.created_at || item.time || item.detectedAt,
+      solSpent: parseFloat(item.solSpent || item.sol_spent || item.sol || 0),
+      oreBuried: parseFloat(item.burnedAmount || item.oreBuried || item.ore_buried || item.ore || 0),
+      stakingYield: parseFloat(item.stakingYield || item.staking_yield || item.yield || 0),
+    }));
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach buybacks API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches liquidity history with price data
+ */
+export async function getLiquidityHistory(): Promise<Array<{
+  timestamp: string;
+  totalLiquidity: number;
+  priceUsd: number;
+  volume24h: number;
+}>> {
+  try {
+    // Use proxy in development, serverless function in production
+    const apiUrl = import.meta.env.DEV 
+      ? '/api/liquidity/history'
+      : '/api/liquidity/history';
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch liquidity history: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Map API response to expected format
+    // API returns: ts, totalLiquidityUsd, priceUsd, volume24h
+    return data.map((item: any) => ({
+      timestamp: item.ts || item.timestamp || item.time || item.created_at,
+      totalLiquidity: parseFloat(item.totalLiquidityUsd || item.totalLiquidity || item.liquidity || 0),
+      priceUsd: parseFloat(item.priceUsd || item.price || 0),
+      volume24h: parseFloat(item.volume24h || item.volume || 0),
+    })).sort((a: { timestamp: string }, b: { timestamp: string }) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach liquidity history API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches current staking metrics
+ */
+export async function getStakingMetricsNow(): Promise<{
+  asOf: string;
+  L_7d: number;
+  S_bar_7d: number;
+  r_7d: number;
+  r_24h: number;
+  apr_annualized: number;
+  actualDays: number;
+  samples: {
+    count: number;
+    intervalSec: number;
+  };
+}> {
+  try {
+    // Use proxy in development, serverless function in production
+    const apiUrl = import.meta.env.DEV 
+      ? '/api/staking/metrics/now'
+      : '/api/staking/metrics/now';
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch staking metrics: ${response.status} ${response.statusText}`);
+    }
+    
+    return response.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach staking metrics API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches staking metrics history
+ */
+export async function getStakingMetricsHistory(): Promise<Array<{
+  date: string;
+  apr: number;
+  apy: number;
+  dailyReturn: number;
+  stakeFees: number;
+  L_7d: number;
+  S_bar_7d: number;
+}>> {
+  try {
+    // Use proxy in development, serverless function in production
+    const apiUrl = import.meta.env.DEV 
+      ? '/api/staking/metrics/history'
+      : '/api/staking/metrics/history';
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch staking metrics history: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Map API response to expected format
+    // API returns: date, L_total, S_time_weighted, r_daily, apr_annualized
+    return data.map((item: any) => ({
+      date: item.date || item.timestamp || item.asOf,
+      apr: parseFloat(item.apr_annualized || item.apr || 0),
+      apy: 0, // Will be calculated from APR
+      dailyReturn: parseFloat(item.r_daily || item.dailyReturn || item.r_24h || 0), // r_daily is decimal (0.00018873 = 0.018873%)
+      stakeFees: parseFloat(item.L_total || item.stakeFees || item.L_7d || 0), // L_total is ORE amount
+      L_7d: parseFloat(item.L_total || item.L_7d || 0),
+      S_bar_7d: parseFloat(item.S_time_weighted || item.S_bar_7d || 0),
+    }));
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach staking metrics history API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches DEX liquidity breakdown
+ */
+export async function getLiquidityDexBreakdown(): Promise<Array<{
+  dexName: string;
+  liquidityUsd: number;
+  volume24h: number;
+  poolCount: number;
+  pools: Array<{
+    pairAddress: string;
+    liquidityUsd: number;
+    volume24h: number;
+  }>;
+}>> {
+  try {
+    // Use proxy in development, serverless function in production
+    const apiUrl = import.meta.env.DEV 
+      ? '/api/liquidity/dex-breakdown'
+      : '/api/liquidity/dex-breakdown';
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch liquidity DEX breakdown: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Map API response to expected format
+    return data.map((item: any) => ({
+      dexName: item.dexName || '',
+      liquidityUsd: parseFloat(item.liquidityUsd || 0),
+      volume24h: parseFloat(item.volume24h || 0),
+      poolCount: parseInt(item.poolCount || 0),
+      pools: (item.pools || []).map((pool: any) => ({
+        pairAddress: pool.pairAddress || '',
+        liquidityUsd: parseFloat(pool.liquidityUsd || 0),
+        volume24h: parseFloat(pool.volume24h || 0),
+      })),
+    }));
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach liquidity DEX breakdown API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches current unrefined staking metrics
+ */
+export async function getUnrefinedMetricsNow(): Promise<{
+  asOf: string;
+  L_7d: number;
+  U_bar_7d: number;
+  r_7d: number;
+  r_24h: number;
+  apr_annualized: number;
+  actualDays: number;
+  samples: {
+    count: number;
+    intervalSec: number;
+  };
+}> {
+  try {
+    // Use proxy in development, serverless function in production
+    const apiUrl = import.meta.env.DEV 
+      ? '/api/metrics/now'
+      : '/api/metrics/now';
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch unrefined metrics: ${response.status} ${response.statusText}`);
+    }
+    
+    return response.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach unrefined metrics API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches unrefined staking metrics history
+ */
+export async function getUnrefinedMetricsHistory(): Promise<Array<{
+  date: string;
+  apr: number;
+  apy: number;
+  dailyReturn: number;
+  haircuts: number;
+  L_7d: number;
+  U_bar_7d: number;
+}>> {
+  try {
+    // Use proxy in development, serverless function in production
+    const apiUrl = import.meta.env.DEV 
+      ? '/api/metrics/history'
+      : '/api/metrics/history';
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch unrefined metrics history: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    // Map API response to expected format
+    // API returns: date, L_total, U_time_weighted, r_daily, apr_annualized
+    return data.map((item: any) => ({
+      date: item.date || item.timestamp || item.asOf,
+      apr: parseFloat(item.apr_annualized || item.apr || 0),
+      apy: 0, // Will be calculated from APR
+      dailyReturn: parseFloat(item.r_daily || item.dailyReturn || item.r_24h || 0), // r_daily is decimal (0.000834 = 0.0834%)
+      haircuts: parseFloat(item.L_total || item.haircuts || item.L_7d || 0), // L_total is ORE amount
+      L_7d: parseFloat(item.L_total || item.L_7d || 0),
+      U_bar_7d: parseFloat(item.U_time_weighted || item.U_bar_7d || 0),
+    }));
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach unrefined metrics history API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches profile data for a wallet address (includes rounds data and summary)
+ */
+export async function getProfileData(walletAddress: string): Promise<{
+  wallet: string;
+  rounds: Array<{
+    roundId: string;
+    deployedSol: string;
+    deployedTiles: string[];
+    oreEarned: string;
+    solEarned: string;
+    netSol: string;
+    solPriceUsd: string;
+    netUsd: string;
+    isWinner: boolean;
+    isSplit: boolean;
+    hitMotherlode: boolean;
+    motherlodeOre: string | null;
+    winningTile: number;
+    createdAt: string;
+  }>;
+  summary?: {
+    totalRounds: number;
+    totalWins: number;
+    winRate: string;
+    totalOreEarned: string;
+    currentOreBalance: string;
+    totalSolDeployed: string;
+    totalSolEarned: string;
+    netSol: string;
+    avgSolPerRound: string;
+    totalNetUsd: string;
+    totalSolCostUsd: string;
+    dataSource: string;
+  };
+}> {
+  try {
+    const apiUrl = import.meta.env.DEV 
+      ? `/api/profile/${walletAddress}`
+      : `/api/profile/${walletAddress}`;
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new Error(`Failed to fetch profile data: ${response.status} ${response.statusText}. ${errorText.substring(0, 100)}`);
+    }
+
+    // Check if response is JSON
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      const text = await response.text();
+      throw new Error(`Invalid response format. Expected JSON, got: ${contentType}. Response: ${text.substring(0, 200)}`);
+    }
+    
+    return response.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach profile API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Fetches wallet balances (unrefined, refined, staked, total)
+ */
+export async function getWalletBalances(walletAddress: string): Promise<{
+  wallet: string;
+  unrefined: string;
+  refined: string;
+  staked: string;
+  total: string;
+  dataSource: string;
+}> {
+  try {
+    const apiUrl = import.meta.env.DEV 
+      ? `/api/profile/${walletAddress}/balances`
+      : `/api/profile/${walletAddress}/balances`;
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new Error(`Failed to fetch balances: ${response.status} ${response.statusText}. ${errorText.substring(0, 100)}`);
+    }
+
+    // Check if response is JSON
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      const text = await response.text();
+      throw new Error(`Invalid response format. Expected JSON, got: ${contentType}. Response: ${text.substring(0, 200)}`);
+    }
+    
+    return response.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach balances API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+

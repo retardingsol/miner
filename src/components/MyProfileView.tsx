@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { getMinerStats, getWalletBalance, getLeaderboard, getMinerHistory } from '../services/api';
+import { useState, useEffect, useCallback } from 'react';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { getMinerStats, getWalletBalance, getLeaderboard, getMinerHistory, getTokenCurrent, getProfileData, getWalletBalances, getOreLeaders } from '../services/api';
 import { SolanaLogo } from './SolanaLogo';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -43,25 +44,193 @@ interface HistoryDataPoint {
 }
 
 export function MyProfileView() {
+  const { publicKey, connected } = useWallet();
   const [walletAddress, setWalletAddress] = useState('');
   const [minerStats, setMinerStats] = useState<MinerStats | null>(null);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry | null>(null);
+  const [oreLeaderboard, setOreLeaderboard] = useState<Array<{ authority: string; rewards_ore: number }>>([]);
   const [historyData, setHistoryData] = useState<HistoryDataPoint[]>([]);
   const [, setWalletBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [show24hrOre, setShow24hrOre] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
-
-  const formatSol = (lamports: number) => {
-    const sol = lamports / LAMPORTS_PER_SOL;
-    return sol.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
-  };
+  const [solPrice, setSolPrice] = useState<number | null>(null);
+  const [orePrice, setOrePrice] = useState<number | null>(null);
+  const [profileData, setProfileData] = useState<any>(null);
+  const [walletBalances, setWalletBalances] = useState<any>(null);
+  const [savedProfile, setSavedProfile] = useState<string | null>(null);
+  const [autoLoadedFromWallet, setAutoLoadedFromWallet] = useState(false);
 
   const formatOre = (ore: number) => {
     const converted = ore / ORE_CONVERSION_FACTOR;
-    return converted.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+    return converted.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 });
   };
+
+  const formatCurrency = (value: number) => {
+    return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // Helper function to perform wallet search (memoized to avoid dependency issues)
+  const performWalletSearch = useCallback(async (address: string) => {
+    setLoading(true);
+    setError(null);
+    setMinerStats(null);
+    setLeaderboardData(null);
+    setOreLeaderboard([]);
+    setHistoryData([]);
+    setWalletBalance(null);
+    setProfileData(null);
+    setWalletBalances(null);
+    setShowGraph(false);
+
+    try {
+      const trimmedAddress = address.trim();
+      const [stats, balance, history, profile, balances] = await Promise.allSettled([
+        getMinerStats(trimmedAddress),
+        getWalletBalance(trimmedAddress),
+        getMinerHistory(trimmedAddress),
+        getProfileData(trimmedAddress),
+        getWalletBalances(trimmedAddress),
+      ]);
+      
+      // Extract values from Promise.allSettled results
+      const minerStatsResult = stats.status === 'fulfilled' ? stats.value : null;
+      const walletBalanceResult = balance.status === 'fulfilled' ? balance.value : null;
+      const historyResult = history.status === 'fulfilled' ? history.value : [];
+      const profileResult = profile.status === 'fulfilled' ? profile.value : null;
+      const balancesResult = balances.status === 'fulfilled' ? balances.value : null;
+
+      // Log any failures for debugging
+      if (stats.status === 'rejected') {
+        console.error('Failed to fetch miner stats:', stats.reason);
+      }
+      if (balance.status === 'rejected') {
+        console.error('Failed to fetch wallet balance:', balance.reason);
+      }
+      if (history.status === 'rejected') {
+        console.error('Failed to fetch miner history:', history.reason);
+      }
+      if (profile.status === 'rejected') {
+        console.error('Failed to fetch profile data:', profile.reason);
+        console.error('Profile error details:', profile.reason?.message || profile.reason);
+      }
+      if (balances.status === 'rejected') {
+        console.error('Failed to fetch wallet balances:', balances.reason);
+      }
+      
+      setMinerStats(minerStatsResult);
+      setWalletBalance(walletBalanceResult);
+      setHistoryData(historyResult);
+      setProfileData(profileResult);
+      setWalletBalances(balancesResult);
+
+      // Save wallet address to localStorage for future visits
+      localStorage.setItem('ore-profile-wallet', trimmedAddress);
+
+      // Fetch leaderboard data to get rounds_played and rounds_won (fallback)
+      try {
+        const leaderboard = await getLeaderboard();
+        const minerEntry = leaderboard.find(entry => entry.pubkey === trimmedAddress);
+        if (minerEntry) {
+          setLeaderboardData(minerEntry);
+        }
+      } catch (err) {
+        console.error('Failed to fetch leaderboard data:', err);
+      }
+
+      // Fetch ORE leaderboard to get rank by unrefined ORE
+      try {
+        const oreLeaders = await getOreLeaders();
+        // Sort by rewards_ore (unrefined ORE) descending, same as leaderboard page
+        const sortedOreLeaders = [...oreLeaders].sort((a, b) => b.rewards_ore - a.rewards_ore);
+        setOreLeaderboard(sortedOreLeaders.map(leader => ({ authority: leader.authority, rewards_ore: leader.rewards_ore })));
+      } catch (err) {
+        console.error('Failed to fetch ORE leaderboard data:', err);
+      }
+
+      // Show error if critical data is missing
+      if (!profileResult && !minerStatsResult) {
+        setError('Unable to load profile data. Please check the wallet address and try again.');
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch miner stats';
+      console.error('Error in performWalletSearch:', err);
+      setError(errorMessage);
+      setMinerStats(null);
+      setLeaderboardData(null);
+      setOreLeaderboard([]);
+      setHistoryData([]);
+      setWalletBalance(null);
+      setProfileData(null);
+      setWalletBalances(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Fetch SOL and ORE prices
+  useEffect(() => {
+    const fetchPrices = async () => {
+      try {
+        // Fetch SOL price from CoinGecko
+        const solResponse = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd');
+        const solData = await solResponse.json();
+        setSolPrice(solData.solana?.usd || null);
+
+        // Fetch ORE price from token API
+        const tokenData = await getTokenCurrent();
+        setOrePrice(tokenData.priceUsd || null);
+      } catch (err) {
+        console.error('Error fetching prices:', err);
+      }
+    };
+
+    fetchPrices();
+    // Refresh prices every 60 seconds
+    const interval = setInterval(fetchPrices, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load saved profile on mount and check URL parameters
+  useEffect(() => {
+    // Check for wallet parameter in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const walletParam = urlParams.get('wallet');
+    
+    if (walletParam && walletParam.trim()) {
+      setWalletAddress(walletParam.trim());
+      performWalletSearch(walletParam.trim());
+      return;
+    }
+    
+    const savedWallet = localStorage.getItem('ore-profile-wallet');
+    const savedAsProfile = localStorage.getItem('ore-saved-profile');
+    if (savedAsProfile && savedAsProfile.trim()) {
+      setSavedProfile(savedAsProfile);
+      setWalletAddress(savedAsProfile);
+      // Trigger search automatically after a short delay to ensure component is mounted
+      const timer = setTimeout(() => {
+        performWalletSearch(savedAsProfile);
+      }, 100);
+      return () => clearTimeout(timer);
+    } else if (savedWallet && savedWallet.trim()) {
+      setWalletAddress(savedWallet);
+      const timer = setTimeout(() => {
+        performWalletSearch(savedWallet);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [performWalletSearch]);
+
+  // If a Phantom wallet is connected, auto-load that wallet into the profile view once
+  useEffect(() => {
+    if (!connected || !publicKey || autoLoadedFromWallet) return;
+
+    const address = publicKey.toBase58();
+    setWalletAddress(address);
+    setAutoLoadedFromWallet(true);
+    void performWalletSearch(address);
+  }, [connected, publicKey, autoLoadedFromWallet, performWalletSearch]);
 
   const formatTimeLabel = (timestamp: number) => {
     if (!timestamp || timestamp === 0) return '';
@@ -75,18 +244,6 @@ export function MyProfileView() {
     return `${minutes}m ago`;
   };
 
-  const formatDate = (timestamp: number) => {
-    if (!timestamp || timestamp === 0) return 'Never';
-    const date = new Date(timestamp * 1000);
-    return date.toLocaleString('en-US', { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!walletAddress.trim()) {
@@ -94,69 +251,28 @@ export function MyProfileView() {
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    setMinerStats(null);
-    setLeaderboardData(null);
-    setHistoryData([]);
-    setWalletBalance(null);
-    setShowGraph(false);
+    await performWalletSearch(walletAddress);
+  };
 
-    try {
-      const address = walletAddress.trim();
-      const [stats, balance, history] = await Promise.all([
-        getMinerStats(address),
-        getWalletBalance(address).catch(() => null),
-        getMinerHistory(address).catch(() => []),
-      ]);
-      
-      setMinerStats(stats);
-      setWalletBalance(balance);
-      setHistoryData(history);
-
-      // Fetch leaderboard data to get rounds_played and rounds_won
-      try {
-        const leaderboard = await getLeaderboard();
-        const minerEntry = leaderboard.find(entry => entry.pubkey === address);
-        if (minerEntry) {
-          setLeaderboardData(minerEntry);
-        }
-      } catch (err) {
-        console.error('Failed to fetch leaderboard data:', err);
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch miner stats';
-      setError(errorMessage);
-      setMinerStats(null);
-      setLeaderboardData(null);
-      setHistoryData([]);
-      setWalletBalance(null);
-    } finally {
-      setLoading(false);
+  const handleSaveProfile = () => {
+    if (minerStats?.authority) {
+      localStorage.setItem('ore-saved-profile', minerStats.authority);
+      setSavedProfile(minerStats.authority);
     }
   };
 
-  // Calculate 24hr ORE earned (difference between current and 24h ago)
-  const calculate24hrOreEarned = () => {
-    if (historyData.length < 2) return 0;
-    const now = Date.now();
-    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
-    
-    // Find closest data point to 24h ago
-    let closest24hAgo = historyData[0];
-    for (const point of historyData) {
-      const pointTime = point.timestamp * 1000;
-      if (pointTime <= twentyFourHoursAgo) {
-        closest24hAgo = point;
-      } else {
-        break;
-      }
+  const handleLoadSavedProfile = () => {
+    if (savedProfile) {
+      setWalletAddress(savedProfile);
+      performWalletSearch(savedProfile);
     }
-    
-    const currentOre = (minerStats?.rewards_ore || 0) / ORE_CONVERSION_FACTOR;
-    const ore24hAgo = (closest24hAgo.unclaimed_ore || 0) / ORE_CONVERSION_FACTOR;
-    return currentOre - ore24hAgo;
   };
+
+  const handleResetSavedProfile = () => {
+    localStorage.removeItem('ore-saved-profile');
+    setSavedProfile(null);
+  };
+
 
   // Prepare graph data
   const graphData = historyData.map(point => ({
@@ -168,34 +284,64 @@ export function MyProfileView() {
     lifetimeOre: (point.lifetime_ore || 0) / ORE_CONVERSION_FACTOR,
   })).reverse(); // Reverse to show oldest to newest
 
+  // Calculate metrics for refinore dashboard
+  // Use balances API if available, otherwise fall back to minerStats
+  const unrefinedOre = walletBalances ? parseFloat(walletBalances.unrefined || '0') : (minerStats ? minerStats.rewards_ore / ORE_CONVERSION_FACTOR : 0);
+  const refinedOre = walletBalances ? parseFloat(walletBalances.refined || '0') : (minerStats ? minerStats.refined_ore / ORE_CONVERSION_FACTOR : 0);
+  const stakedOre = walletBalances ? parseFloat(walletBalances.staked || '0') : 0;
+  const totalOre = walletBalances ? parseFloat(walletBalances.total || '0') : (unrefinedOre + refinedOre + stakedOre);
+
+  // Use profile data summary if available, otherwise calculate from rounds or fall back to leaderboard
+  const totalRounds = profileData?.summary?.totalRounds || profileData?.rounds?.length || leaderboardData?.rounds_played || 0;
+  const totalWins = profileData?.summary?.totalWins || profileData?.rounds?.filter((r: any) => r.isWinner === true).length || leaderboardData?.rounds_won || 0;
+  
+  // Use summary values if available, otherwise calculate from rounds
+  const solDeployed = profileData?.summary?.totalSolDeployed
+    ? parseFloat(profileData.summary.totalSolDeployed)
+    : (profileData?.rounds 
+      ? profileData.rounds.reduce((sum: number, r: any) => sum + parseFloat(r.deployedSol || '0'), 0)
+      : (minerStats ? minerStats.total_deployed / LAMPORTS_PER_SOL : 0));
+  
+  const solEarned = profileData?.summary?.totalSolEarned
+    ? parseFloat(profileData.summary.totalSolEarned)
+    : (profileData?.rounds
+      ? profileData.rounds.reduce((sum: number, r: any) => sum + parseFloat(r.solEarned || '0'), 0)
+      : (minerStats ? minerStats.lifetime_rewards_sol / LAMPORTS_PER_SOL : 0));
+  
+  const oreEarned = profileData?.summary?.totalOreEarned
+    ? parseFloat(profileData.summary.totalOreEarned)
+    : (profileData?.rounds
+      ? profileData.rounds.reduce((sum: number, r: any) => sum + parseFloat(r.oreEarned || '0'), 0)
+      : (minerStats ? minerStats.lifetime_rewards_ore / ORE_CONVERSION_FACTOR : 0));
+  
+  // Calculate net SOL change from profile data if available, otherwise from minerStats
+  const netSolChange = profileData?.summary?.netSol
+    ? parseFloat(profileData.summary.netSol)
+    : (solEarned - solDeployed);
+  
+  const costPerOreSol = oreEarned > 0 && solDeployed > 0
+    ? solDeployed / oreEarned
+    : 0;
+  const costPerOreUsd = (costPerOreSol * (solPrice || 0)) / 10;
+
+  const avgSolPerRound = profileData?.summary?.avgSolPerRound
+    ? parseFloat(profileData.summary.avgSolPerRound)
+    : (totalRounds > 0 ? solDeployed / totalRounds : 0);
+
   // Calculate win rate
-  const winRate = leaderboardData 
+  const winRate = totalRounds > 0 
+    ? ((totalWins / totalRounds) * 100).toFixed(1)
+    : (leaderboardData 
     ? leaderboardData.rounds_played > 0 
       ? ((leaderboardData.rounds_won / leaderboardData.rounds_played) * 100).toFixed(1)
       : '0.0'
-    : '0.0';
+      : '0.0');
 
-  // Calculate net ORE
-  const netOre = minerStats 
-    ? ((minerStats.rewards_ore + minerStats.refined_ore) / ORE_CONVERSION_FACTOR)
-    : 0;
-  
-  const oreFee = minerStats ? (minerStats.rewards_ore * 0.1) / ORE_CONVERSION_FACTOR : 0;
-  const netOreAfterFee = netOre - oreFee;
-
-  // Calculate net SOL change
-  const netSolChange = minerStats 
-    ? (minerStats.lifetime_rewards_sol - minerStats.total_deployed) / LAMPORTS_PER_SOL
-    : 0;
-
-  // Get latest round deployment (first deployment in array or 0)
-  const latestRoundDeployed = minerStats?.deployed && minerStats.deployed.length > 0
-    ? minerStats.deployed[minerStats.deployed.length - 1] / LAMPORTS_PER_SOL
-    : 0;
-
-  const latestRoundSolRewards = minerStats?.rewards_sol 
-    ? minerStats.rewards_sol / LAMPORTS_PER_SOL
-    : 0;
+  // Calculate USD values
+  const solEarnedUsd = solPrice && solEarned ? solEarned * solPrice : 0;
+  const solDeployedUsd = solPrice && solDeployed ? solDeployed * solPrice : 0;
+  const oreValueUsd = orePrice && totalOre ? totalOre * orePrice : 0;
+  const truePnl = solEarnedUsd + oreValueUsd - solDeployedUsd;
 
   return (
     <div className="min-h-screen bg-black py-8 px-4">
@@ -208,6 +354,7 @@ export function MyProfileView() {
         {/* Search Bar */}
         <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6 mb-6">
           <form onSubmit={handleSearch}>
+            <div className="flex flex-col gap-3">
             <div className="flex gap-3">
               <input
                 type="text"
@@ -218,11 +365,51 @@ export function MyProfileView() {
               />
               <button
                 type="submit"
-                disabled={loading}
-                className="px-6 py-3 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/50 text-white rounded-lg font-medium transition-colors disabled:cursor-not-allowed whitespace-nowrap"
-              >
-                {loading ? 'Searching...' : 'Search'}
+                  className="px-6 py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-colors whitespace-nowrap flex items-center gap-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Searching...
+                    </>
+                  ) : (
+                    'Search'
+                  )}
+                </button>
+                {savedProfile && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleLoadSavedProfile}
+                      className="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors whitespace-nowrap"
+                    >
+                      My Profile
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleResetSavedProfile}
+                      className="px-4 py-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/50 rounded-lg font-medium transition-colors whitespace-nowrap flex items-center gap-2"
+                      title="Reset saved profile"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </>
+                )}
+              </div>
+              {minerStats && minerStats.authority !== savedProfile && (
+                <button
+                  type="button"
+                  onClick={handleSaveProfile}
+                  className="self-start px-4 py-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/50 rounded-lg text-sm transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Save as My Profile
               </button>
+              )}
             </div>
           </form>
         </div>
@@ -235,371 +422,284 @@ export function MyProfileView() {
           </div>
         )}
 
-        {/* Main Stats Panel */}
-        {minerStats && (
+        {/* Loading Indicator */}
+        {loading && (
+          <div className="mb-6 bg-amber-500/20 border border-amber-500/50 rounded-lg p-4 flex items-center gap-3">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-amber-400"></div>
+            <p className="text-amber-400 font-semibold">Loading profile data...</p>
+          </div>
+        )}
+
+        {/* Main Stats Panel - Always show when there's data or a search in progress */}
+        {(minerStats || loading) && (
           <div className="space-y-6">
-            {/* Wallet Header */}
+            {/* Current Balances Section */}
             <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-slate-400 mb-2">Wallet Address</p>
-                  <p className="text-lg font-mono text-slate-200 break-all">{minerStats.authority}</p>
-                </div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-slate-200 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Current Balances
+                </h2>
+                {minerStats && (
                 <a
                   href={`https://solscan.io/account/${minerStats.authority}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-sm text-blue-400 hover:text-blue-300 underline whitespace-nowrap"
+                    className="text-sm text-blue-400 hover:text-blue-300 underline whitespace-nowrap flex items-center gap-1"
                 >
-                  View on Solscan →
-                </a>
-              </div>
-            </div>
-
-            {/* Tracked Performance Section */}
-            <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <svg className="w-5 h-5 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                </svg>
-                <h3 className="text-lg font-semibold text-slate-200">Tracked Performance</h3>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Played</span>
-                    <span className="text-lg font-semibold text-slate-200">
-                      {leaderboardData?.rounds_played.toLocaleString() || '0'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Won</span>
-                    <span className="text-lg font-semibold text-slate-200">
-                      {leaderboardData?.rounds_won.toLocaleString() || '0'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Win Rate</span>
-                    <span className="text-lg font-semibold text-slate-200">{winRate}%</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Tracked ORE Earned</span>
-                    <span className="text-lg font-semibold text-blue-400">
-                      {formatOre(minerStats.lifetime_rewards_ore)}
-                    </span>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <SolanaLogo width={20} />
-                    <span className="text-sm font-semibold text-slate-300">SOL</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Deployed</span>
-                    <span className="text-lg font-semibold text-slate-200">
-                      {formatSol(minerStats.total_deployed)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Earned</span>
-                    <span className="text-lg font-semibold text-slate-200">
-                      {formatSol(minerStats.lifetime_rewards_sol)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-400">Net</span>
-                    <span className={`text-lg font-semibold ${netSolChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {netSolChange >= 0 ? '+' : ''}{netSolChange.toFixed(4)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* ORE Balance Section */}
-            <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <img 
-                  src="/orelogo.jpg" 
-                  alt="ORE" 
-                  className="w-5 h-5 rounded"
-                />
-                <h3 className="text-lg font-semibold text-slate-200">ORE Balance</h3>
-              </div>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-400">Unclaimed</span>
-                  <span className="text-lg font-semibold text-blue-400">
-                    {formatOre(minerStats.rewards_ore)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-400">Fee (10%)</span>
-                  <span className="text-lg font-semibold text-red-400">
-                    -{formatOre(oreFee * ORE_CONVERSION_FACTOR)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-400">Refined</span>
-                  <span className="text-lg font-semibold text-slate-200">
-                    {formatOre(minerStats.refined_ore)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-400">Net ORE</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg font-semibold text-blue-400">
-                      {formatOre(netOreAfterFee * ORE_CONVERSION_FACTOR)}
-                    </span>
-                    <span className="text-sm text-red-400">-3.5%</span>
-                  </div>
-                </div>
-                <div className="pt-2 border-t border-slate-700">
-                  <button
-                    onClick={() => setShow24hrOre(!show24hrOre)}
-                    className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-200 transition-colors"
-                  >
-                    <svg 
-                      className={`w-4 h-4 transition-transform ${show24hrOre ? 'rotate-180' : ''}`}
-                      fill="none" 
-                      stroke="currentColor" 
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    View on Solscan
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
-                    Show 24hr ORE Earned
-                  </button>
-                  {show24hrOre && (
-                    <div className="mt-2 text-sm text-slate-300">
-                      {calculate24hrOreEarned().toFixed(4)} ORE
+                </a>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                {/* Unrefined ORE */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2">Unrefined ORE</p>
+                  {loading && !walletBalances ? (
+                    <div className="flex items-center gap-2">
+                      <div className="animate-pulse bg-slate-700 h-8 w-24 rounded"></div>
+            </div>
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
+                      {formatOre(unrefinedOre * ORE_CONVERSION_FACTOR)}
+                    </p>
+                  )}
+                </div>
+
+                {/* Refined ORE */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2">Refined ORE</p>
+                  {loading && !walletBalances ? (
+                    <div className="flex items-center gap-2">
+                      <div className="animate-pulse bg-slate-700 h-8 w-24 rounded"></div>
+                  </div>
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
+                      {formatOre(refinedOre * ORE_CONVERSION_FACTOR)}
+                    </p>
+                  )}
+            </div>
+
+                {/* Staked ORE */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2">Staked ORE</p>
+                  {loading && !walletBalances ? (
+                    <div className="flex items-center gap-2">
+                      <div className="animate-pulse bg-slate-700 h-8 w-24 rounded"></div>
+              </div>
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
+                      {formatOre(stakedOre * ORE_CONVERSION_FACTOR)}
+                    </p>
+                  )}
+                </div>
+
+                {/* Total ORE */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2">Total ORE</p>
+                  {loading && !walletBalances ? (
+                  <div className="flex items-center gap-2">
+                      <div className="animate-pulse bg-slate-700 h-8 w-24 rounded"></div>
+                  </div>
+                  ) : (
+                    <p className="text-2xl font-bold text-white flex items-center gap-2">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
+                      {formatOre(totalOre * ORE_CONVERSION_FACTOR)}
+                    </p>
+                  )}
+                </div>
+
+                {/* Leaderboard Rank */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                    </svg>
+                    Leaderboard Rank
+                  </p>
+                  {loading && oreLeaderboard.length === 0 ? (
+                    <div className="flex items-center gap-2">
+                      <div className="animate-pulse bg-slate-700 h-8 w-16 rounded"></div>
                     </div>
+                  ) : oreLeaderboard.length > 0 && minerStats ? (
+                    <p className="text-2xl font-bold text-white">
+                      #{(() => {
+                        const index = oreLeaderboard.findIndex(entry => entry.authority === minerStats.authority);
+                        return index >= 0 ? index + 1 : 'N/A';
+                      })()}
+                    </p>
+                  ) : (
+                    <p className="text-2xl font-bold text-slate-500">—</p>
                   )}
                 </div>
               </div>
             </div>
 
-            {/* Latest Round Section */}
+            {/* Mining Performance Section */}
             <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-slate-200 mb-4">Latest Round</h3>
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-400">Round ID</span>
-                  <span className="text-lg font-semibold text-slate-200">#{minerStats.round_id}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-400">Deployed</span>
-                  <span className="text-lg font-semibold text-slate-200">
-                    {latestRoundDeployed.toFixed(5)} SOL
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm text-slate-400">SOL Rewards</span>
-                  <span className="text-lg font-semibold text-yellow-400">
-                    {latestRoundSolRewards.toFixed(4)} SOL
-                  </span>
+              <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+                Mining Performance
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                {/* Total Rounds */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    Total Rounds
+                  </p>
+                  <p className="text-2xl font-bold text-white">{totalRounds.toLocaleString()}</p>
+            </div>
+
+                {/* Total Wins */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                    </svg>
+                    Total Wins
+                  </p>
+                  <p className="text-2xl font-bold text-white">{totalWins.toLocaleString()}</p>
+              </div>
+
+                {/* Win Rate */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    Win Rate
+                  </p>
+                  <p className="text-2xl font-bold text-white">{winRate}%</p>
+              </div>
+
+                {/* ORE Earned */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded" />
+                    ORE Earned
+                  </p>
+                  <p className="text-2xl font-bold text-white flex items-center gap-2">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
+                    {formatOre(oreEarned * ORE_CONVERSION_FACTOR)}
+                  </p>
+              </div>
+
+                {/* Cost per ORE */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Cost per ORE
+                  </p>
+                  <p className="text-2xl font-bold text-white">${costPerOreUsd > 0 ? formatCurrency(costPerOreUsd) : '0.00'}</p>
                 </div>
               </div>
             </div>
 
-            {/* Stats Grid - Original Card Layout */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Lifetime SOL Rewards */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <SolanaLogo width={20} />
-                  <p className="text-sm text-slate-400 uppercase tracking-wider">Lifetime SOL Rewards</p>
-                </div>
-                <p className="text-2xl font-bold text-slate-200">{formatSol(minerStats.lifetime_rewards_sol)}</p>
-                <p className="text-xs text-slate-500 mt-1">Total SOL earned from mining</p>
-              </div>
-
-              {/* Lifetime ORE Rewards */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <img 
-                    src="/orelogo.jpg" 
-                    alt="ORE" 
-                    className="w-5 h-5 rounded"
-                  />
-                  <p className="text-sm text-slate-400 uppercase tracking-wider">Lifetime ORE Rewards</p>
-                </div>
-                <p className="text-2xl font-bold text-slate-200">{formatOre(minerStats.lifetime_rewards_ore)}</p>
-                <p className="text-xs text-slate-500 mt-1">Total ORE earned from mining</p>
-              </div>
-
-              {/* Total SOL Deployed */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <SolanaLogo width={20} />
-                  <p className="text-sm text-slate-400 uppercase tracking-wider">Total SOL Deployed</p>
-                </div>
-                <p className="text-2xl font-bold text-slate-200">{formatSol(minerStats.total_deployed)}</p>
-                <p className="text-xs text-slate-500 mt-1">Total SOL spent on mining</p>
-              </div>
-
-              {/* Net SOL Change */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <SolanaLogo width={20} />
-                  <p className="text-sm text-slate-400 uppercase tracking-wider">Net SOL Change</p>
-                </div>
-                {(() => {
-                  const netChange = (minerStats.lifetime_rewards_sol - minerStats.total_deployed) / LAMPORTS_PER_SOL;
-                  return (
-                    <>
-                      <p className={`text-2xl font-bold ${netChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {netChange >= 0 ? '+' : ''}{netChange.toFixed(4)}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-1">Earned - Deployed</p>
-                    </>
-                  );
-                })()}
-              </div>
-
-              {/* Unrefined ORE */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <img 
-                    src="/orelogo.jpg" 
-                    alt="ORE" 
-                    className="w-5 h-5 rounded"
-                  />
-                  <p className="text-sm text-slate-400 uppercase tracking-wider">Unrefined ORE</p>
-                </div>
-                <p className="text-2xl font-bold text-green-400">{formatOre(minerStats.rewards_ore)}</p>
-                <p className="text-xs text-slate-500 mt-1">ORE waiting to be refined</p>
-              </div>
-
-              {/* Refined ORE */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <img 
-                    src="/orelogo.jpg" 
-                    alt="ORE" 
-                    className="w-5 h-5 rounded"
-                  />
-                  <p className="text-sm text-slate-400 uppercase tracking-wider">Refined ORE</p>
-                </div>
-                <p className="text-2xl font-bold text-slate-200">{formatOre(minerStats.refined_ore)}</p>
-                <p className="text-xs text-slate-500 mt-1">ORE that has been refined</p>
-              </div>
-
-              {/* Current Round ID */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <p className="text-sm text-slate-400 uppercase tracking-wider mb-3">Current Round ID</p>
-                <p className="text-2xl font-bold text-slate-200">#{minerStats.round_id}</p>
-                <p className="text-xs text-slate-500 mt-1">Latest mining round</p>
-              </div>
-
-              {/* Checkpoint ID */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <p className="text-sm text-slate-400 uppercase tracking-wider mb-3">Checkpoint ID</p>
-                <p className="text-2xl font-bold text-slate-200">#{minerStats.checkpoint_id}</p>
-                <p className="text-xs text-slate-500 mt-1">Latest checkpoint</p>
-              </div>
-
-              {/* Checkpoint Fee */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <SolanaLogo width={20} />
-                  <p className="text-sm text-slate-400 uppercase tracking-wider">Checkpoint Fee</p>
-                </div>
-                <p className="text-2xl font-bold text-slate-200">{formatSol(minerStats.checkpoint_fee)}</p>
-                <p className="text-xs text-slate-500 mt-1">Fee for latest checkpoint</p>
-              </div>
-
-              {/* Current SOL Rewards */}
-              <div className="bg-[#21252C] border border-slate-700 rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <SolanaLogo width={20} />
-                  <p className="text-sm text-slate-400 uppercase tracking-wider">Current SOL Rewards</p>
-                </div>
-                <p className="text-2xl font-bold text-slate-200">{formatSol(minerStats.rewards_sol)}</p>
-                <p className="text-xs text-slate-500 mt-1">Unclaimed SOL rewards</p>
-              </div>
-            </div>
-
-            {/* Deployment History */}
-            {minerStats.deployed && minerStats.deployed.length > 0 && (
+            {/* Bottom Section: SOL Flow, USD Value, Avg SOL/Round */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* SOL Flow Analysis */}
               <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-slate-200 mb-4">Deployment History</h3>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {minerStats.deployed.map((deployment, index) => (
-                    <div key={index} className="flex items-center justify-between py-2 px-4 bg-slate-800/50 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <SolanaLogo width={16} />
-                        <span className="text-sm text-slate-300">Deployment #{index + 1}</span>
+                <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  </svg>
+                  SOL Flow Analysis
+                </h2>
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200 mb-1">SOL Deployed</p>
+                    <p className="text-xl font-bold text-white flex items-center gap-2">
+                      <SolanaLogo width={20} />
+                      {solDeployed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 5 })}
+                    </p>
                       </div>
-                      <span className="text-sm font-semibold text-slate-200">{formatSol(deployment)}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200 mb-1">SOL Earned</p>
+                    <p className="text-xl font-bold text-white flex items-center gap-2">
+                      <SolanaLogo width={20} />
+                      {solEarned.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                    </p>
                     </div>
-                  ))}
-                </div>
-                <div className="mt-4 pt-4 border-t border-slate-700">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-400">Total Deployments</span>
-                    <span className="text-sm font-semibold text-slate-200">{minerStats.deployed.length}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200 mb-1">Net SOL (PNL)</p>
+                    <p className={`text-xl font-bold flex items-center gap-2 ${netSolChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      <SolanaLogo width={20} />
+                      {netSolChange >= 0 ? '+' : ''}{netSolChange.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                    </p>
                   </div>
                 </div>
               </div>
-            )}
 
-            {/* Cumulative Deployment History */}
-            {minerStats.cumulative && minerStats.cumulative.length > 0 && (
+              {/* USD Value & True PNL */}
               <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-slate-200 mb-4">Cumulative Deployment History</h3>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {minerStats.cumulative.map((cumulative, index) => (
-                    <div key={index} className="flex items-center justify-between py-2 px-4 bg-slate-800/50 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <SolanaLogo width={16} />
-                        <span className="text-sm text-slate-300">Cumulative #{index + 1}</span>
+                <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  USD Value & True PNL
+                </h2>
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200 mb-1">SOL Earned</p>
+                    <p className="text-xl font-bold text-white">${formatCurrency(solEarnedUsd)}</p>
                       </div>
-                      <span className="text-sm font-semibold text-slate-200">{formatSol(cumulative)}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200 mb-1">SOL Deployed</p>
+                    <p className="text-xl font-bold text-white">${formatCurrency(solDeployedUsd)}</p>
                     </div>
-                  ))}
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200 mb-1">ORE Value</p>
+                    <p className="text-xl font-bold text-white flex items-center gap-2">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-5 h-5 object-contain rounded" />
+                      ${formatCurrency(oreValueUsd)}
+                    </p>
                 </div>
-                <div className="mt-4 pt-4 border-t border-slate-700">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-400">Total Cumulative Entries</span>
-                    <span className="text-sm font-semibold text-slate-200">{minerStats.cumulative.length}</span>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200 mb-1">True PNL</p>
+                    <p className={`text-xl font-bold ${truePnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {truePnl >= 0 ? '+' : ''}${formatCurrency(truePnl)}
+                    </p>
                   </div>
+                  {solPrice && orePrice && (
+                    <p className="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-700 flex items-center gap-1">
+                      Using current prices: <SolanaLogo width={12} /> SOL ${formatCurrency(solPrice)} • <img src="/orelogo.jpg" alt="ORE" className="w-3 h-3 object-contain rounded" /> ORE ${formatCurrency(orePrice)}
+                    </p>
+                  )}
                 </div>
               </div>
-            )}
 
-            {/* Additional Info */}
+              {/* Average SOL/Round */}
             <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-slate-200 mb-4">Additional Information</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-slate-400 mb-1">Last ORE Claim</p>
-                  <p className="text-slate-200">{formatDate(minerStats.last_claim_ore_at)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-slate-400 mb-1">Last SOL Claim</p>
-                  <p className="text-slate-200">{formatDate(minerStats.last_claim_sol_at)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-slate-400 mb-1">Wallet Address</p>
-                  <p className="text-slate-200 font-mono text-sm break-all">{minerStats.authority}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-slate-400 mb-1">Current Round ID</p>
-                  <p className="text-slate-200">#{minerStats.round_id}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-slate-400 mb-1">Checkpoint ID</p>
-                  <p className="text-slate-200">#{minerStats.checkpoint_id}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-slate-400 mb-1">Total SOL Deployed</p>
-                  <p className="text-slate-200">{formatSol(minerStats.total_deployed)}</p>
-                </div>
+                <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                  Average SOL/Round
+                </h2>
+                <p className="text-2xl font-bold text-white flex items-center gap-2">
+                  <SolanaLogo width={24} />
+                  {avgSolPerRound.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
+                </p>
               </div>
             </div>
 
             {/* Graph Section */}
-            {historyData.length > 0 && (
+            {historyData.length > 0 && minerStats && (
               <div className="bg-[#21252C] border border-slate-700 rounded-lg p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-semibold text-slate-200">
@@ -673,19 +773,6 @@ export function MyProfileView() {
                 )}
               </div>
             )}
-
-            {/* View History Button */}
-            <div className="flex justify-center">
-              <button
-                onClick={() => setShowGraph(!showGraph)}
-                className="px-6 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-lg text-slate-200 font-medium transition-colors flex items-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-                View History
-              </button>
-            </div>
           </div>
         )}
 

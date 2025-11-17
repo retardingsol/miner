@@ -26,6 +26,26 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path,
       },
-    },
-  },
-})
+      '/api/staking': {
+        target: 'https://refinorev2-production.up.railway.app',
+        changeOrigin: true,
+        rewrite: (path) => path,
+      },
+          '/api/liquidity': {
+            target: 'https://refinorev2-production.up.railway.app',
+            changeOrigin: true,
+            rewrite: (path) => path,
+          },
+          '/api/metrics': {
+            target: 'https://refinorev2-production.up.railway.app',
+            changeOrigin: true,
+            rewrite: (path) => path,
+          },
+          '/api/profile': {
+            target: 'https://refinorev2-production.up.railway.app',
+            changeOrigin: true,
+            rewrite: (path) => path,
+          },
+        },
+      },
+    })

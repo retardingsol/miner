@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import type { RoundPerSquare, StateResponse, BidsResponse } from '../types/api';
 import { SolanaLogo } from './SolanaLogo';
+import { AutoMinePanel } from './AutoMinePanel';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 // Tooltip component that follows the mouse
@@ -145,6 +146,21 @@ function MouseTooltip({ children, content, enabled = true }: { children: React.R
 }
 
 
+interface MartingaleStats {
+  totalRounds: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalSolDeployed: number;
+  totalOreEarned: number;
+  totalNetProfitSol: number;
+  maxDrawdownSol: number;
+  maxBetPlaced: number;
+  currentBet: number;
+  longestLossStreak: number;
+  currentLossStreak: number;
+}
+
 interface GridVisualizationProps {
   perSquare: RoundPerSquare | null;
   winningSquareIndex?: number | null;
@@ -156,6 +172,9 @@ interface GridVisualizationProps {
   bids: BidsResponse | null;
   roundResult: StateResponse['roundResult'];
   roundStatus?: 'idle' | 'active' | 'finished' | 'expired';
+  selectedSquare?: number | null; // 1-25 for Martingale strategy
+  currentBet?: number | null; // Current bet amount in SOL for selected square
+  martingaleStats?: MartingaleStats | null; // Stats for Martingale strategy
 }
 
 interface PriceCostDataPoint {
@@ -166,7 +185,7 @@ interface PriceCostDataPoint {
   date: Date;
 }
 
-export function GridVisualization({ perSquare, winningSquareIndex, countdown, uniqueMiners, totalBids, roundId, state, roundResult, roundStatus }: GridVisualizationProps) {
+export function GridVisualization({ perSquare, winningSquareIndex, countdown, uniqueMiners, totalBids, roundId, state, roundResult, roundStatus, selectedSquare, currentBet, martingaleStats }: GridVisualizationProps) {
   const [barWidths, setBarWidths] = useState<number[]>(Array(25).fill(0));
   const [barColors, setBarColors] = useState<string[]>(Array(25).fill('bg-slate-500'));
   const [tooltipsEnabled, setTooltipsEnabled] = useState(true);
@@ -385,6 +404,9 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                   (winningSquareIndex === index || 
                    (roundResult.winningSquareIndex !== undefined && roundResult.winningSquareIndex === index) ||
                    (roundResult.winningSquareLabel && parseInt(roundResult.winningSquareLabel.replace('#', '')) - 1 === index));
+                
+                // Check if this is the selected square for Martingale strategy (convert from 1-25 to 0-24 index)
+                const isSelectedSquare = selectedSquare !== null && selectedSquare !== undefined && (selectedSquare - 1) === index;
 
                 const showWinningStats = isWinningSquare && (roundStatus === 'expired' || roundStatus === 'finished') && roundResult?.resultAvailable;
                 
@@ -450,15 +472,17 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                       className={`rounded-lg border p-1.5 sm:p-2 lg:p-3 relative aspect-square flex flex-col w-full lg:w-20 xl:w-28 transition-all ${
                         isWinningSquare 
                           ? 'bg-green-900/30 border-green-500 ring-2 ring-green-500/50' 
+                          : isSelectedSquare
+                          ? 'bg-amber-900/20 border-amber-500 ring-2 ring-amber-500/50'
                           : 'bg-[#202a3e] border-slate-600/50'
                       } ${showWinningStats && tooltipsEnabled ? 'cursor-help' : ''}`}
                     >
                       {/* Square number and miners count on same line at top */}
-                      <div className="flex items-center justify-between mb-auto">
+                      <div className="flex items-center justify-between mb-auto relative">
                         <p className="text-[10px] sm:text-xs lg:text-sm text-slate-400 font-medium">
                           #{index + 1}
                         </p>
-                        <div className="flex items-center gap-0.5 sm:gap-1">
+                        <div className="flex items-center gap-0.5 sm:gap-1 flex-1 justify-end pr-0.5">
                           <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 lg:w-3.5 lg:h-3.5 text-slate-400" fill="currentColor" viewBox="0 0 20 20">
                             <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
                           </svg>
@@ -466,6 +490,15 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                             {count.toLocaleString()}
                           </p>
                         </div>
+                        {/* Current Bet for Selected Square - positioned below miner count */}
+                        {isSelectedSquare && !isWinningSquare && currentBet !== null && currentBet !== undefined && currentBet > 0 && (
+                          <div className="absolute top-full right-0 mt-0.5 flex items-center gap-0.5 sm:gap-1 bg-amber-500/20 border border-amber-500/50 rounded px-1 sm:px-1.5 py-0.5 z-10">
+                            <SolanaLogo width={8} className="sm:w-2.5" />
+                            <p className="text-[8px] sm:text-[9px] lg:text-[10px] font-bold text-amber-400">
+                              {currentBet.toFixed(3)}
+                            </p>
+                          </div>
+                        )}
                       </div>
 
                       {/* SOL value with icon - bottom right */}
@@ -695,71 +728,146 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
             </MouseTooltip>
           </div>
 
-          {/* PRODUCTION COST and BUYBACK VOLUME - Same line */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
-            {/* PRODUCTION COST */}
-            <MouseTooltip
-              enabled={tooltipsEnabled}
-              content={
-                <>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    {productionCostSol.toFixed(2)} SOL - at {oreMinedPerRound} ORE mined / round
-                  </p>
-                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                    Calculated as: (Total Deployed SOL × 11%) / {oreMinedPerRound} ORE per round
-                  </p>
-                </>
-              }
-            >
-              <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full">
-                <div className="flex items-center gap-1 sm:gap-1.5 mb-2 min-w-0">
-                  <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-                  </svg>
-                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
-                    PRODUCTION COST
-                  </p>
+          {/* PRODUCTION COST and BUYBACK VOLUME - Hidden on Martingale page */}
+          {!martingaleStats && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+              {/* PRODUCTION COST */}
+              <MouseTooltip
+                enabled={tooltipsEnabled}
+                content={
+                  <>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      {productionCostSol.toFixed(2)} SOL - at {oreMinedPerRound} ORE mined / round
+                    </p>
+                    <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                      Calculated as: (Total Deployed SOL × 11%) / {oreMinedPerRound} ORE per round
+                    </p>
+                  </>
+                }
+              >
+                <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full">
+                  <div className="flex items-center gap-1 sm:gap-1.5 mb-2 min-w-0">
+                    <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                    </svg>
+                    <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
+                      PRODUCTION COST
+                    </p>
+                  </div>
+                  <p className="text-lg sm:text-xl font-bold text-slate-100">{formatCurrency(productionCostUsd)}</p>
                 </div>
-                <p className="text-lg sm:text-xl font-bold text-slate-100">{formatCurrency(productionCostUsd)}</p>
-              </div>
-            </MouseTooltip>
+              </MouseTooltip>
 
-            {/* BUYBACK VOLUME */}
-            <MouseTooltip
-              enabled={tooltipsEnabled}
-              content={
-                <>
-                  <p className="text-xs text-slate-300 leading-relaxed">
-                    At current market price
-                  </p>
-                  <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                    Calculated as: Production Cost USD / ORE Price
-                  </p>
-                </>
-              }
-            >
-              <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full">
-                <div className="flex items-center gap-1 sm:gap-1.5 mb-2 min-w-0">
-                  <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zM18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" />
-                  </svg>
-                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
-                    BUYBACK VOLUME
-                  </p>
+              {/* BUYBACK VOLUME */}
+              <MouseTooltip
+                enabled={tooltipsEnabled}
+                content={
+                  <>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      At current market price
+                    </p>
+                    <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                      Calculated as: Production Cost USD / ORE Price
+                    </p>
+                  </>
+                }
+              >
+                <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full">
+                  <div className="flex items-center gap-1 sm:gap-1.5 mb-2 min-w-0">
+                    <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zM18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" />
+                    </svg>
+                    <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
+                      BUYBACK VOLUME
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <img 
+                      src="/orelogo.jpg" 
+                      alt="ORE" 
+                      className="w-5 h-5 sm:w-6 sm:h-6 rounded flex-shrink-0"
+                    />
+                    <p className="text-lg sm:text-xl font-bold text-slate-100">{buybackVolumeOre} ORE</p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <img 
-                    src="/orelogo.jpg" 
-                    alt="ORE" 
-                    className="w-5 h-5 sm:w-6 sm:h-6 rounded flex-shrink-0"
-                  />
-                  <p className="text-lg sm:text-xl font-bold text-slate-100">{buybackVolumeOre} ORE</p>
+              </MouseTooltip>
+            </div>
+          )}
+
+          {/* Martingale Stats or EV CALC */}
+          {martingaleStats ? (
+            <div className="grid grid-cols-2 gap-2 sm:gap-3">
+              {/* Total SOL Deployed */}
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700">
+                <p className="text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">Total SOL Deployed</p>
+                <div className="flex items-center gap-1 sm:gap-2">
+                  <SolanaLogo width={16} className="sm:w-5" />
+                  <p className="text-base sm:text-xl font-bold text-slate-100">{martingaleStats.totalSolDeployed.toFixed(4)}</p>
                 </div>
               </div>
-            </MouseTooltip>
-          </div>
 
-          {/* EV CALC - Full width */}
+              {/* Total ORE Earned */}
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700">
+                <p className="text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">Total ORE Earned</p>
+                <div className="flex items-center gap-1 sm:gap-2">
+                  <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 sm:w-5 sm:h-5 rounded" />
+                  <p className="text-base sm:text-xl font-bold text-amber-400">{martingaleStats.totalOreEarned.toFixed(4)}</p>
+                </div>
+              </div>
+
+              {/* Net Profit/Loss */}
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700">
+                <p className="text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">Net Profit/Loss</p>
+                <div className="flex items-center gap-1 sm:gap-2">
+                  <SolanaLogo width={16} className="sm:w-5" />
+                  <p className={`text-base sm:text-xl font-bold ${martingaleStats.totalNetProfitSol >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {martingaleStats.totalNetProfitSol >= 0 ? '+' : ''}{martingaleStats.totalNetProfitSol.toFixed(4)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Win Rate */}
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700">
+                <p className="text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">Win Rate</p>
+                <p className="text-base sm:text-xl font-bold text-slate-100">{martingaleStats.winRate.toFixed(2)}%</p>
+                <p className="text-[9px] sm:text-xs text-slate-500 mt-0.5">{martingaleStats.wins}W / {martingaleStats.losses}L</p>
+              </div>
+
+              {/* Current Bet */}
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700">
+                <p className="text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">Current Bet</p>
+                <div className="flex items-center gap-1 sm:gap-2">
+                  <SolanaLogo width={16} className="sm:w-5" />
+                  <p className="text-base sm:text-xl font-bold text-slate-100">{martingaleStats.currentBet.toFixed(4)}</p>
+                </div>
+              </div>
+
+              {/* Max Bet Placed */}
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700">
+                <p className="text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">Max Bet Placed</p>
+                <div className="flex items-center gap-1 sm:gap-2">
+                  <SolanaLogo width={16} className="sm:w-5" />
+                  <p className="text-base sm:text-xl font-bold text-slate-100">{martingaleStats.maxBetPlaced.toFixed(4)}</p>
+                </div>
+              </div>
+
+              {/* Max Drawdown */}
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700">
+                <p className="text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">Max Drawdown</p>
+                <div className="flex items-center gap-1 sm:gap-2">
+                  <SolanaLogo width={16} className="sm:w-5" />
+                  <p className="text-base sm:text-xl font-bold text-red-400">{martingaleStats.maxDrawdownSol.toFixed(4)}</p>
+                </div>
+              </div>
+
+              {/* Current Loss Streak */}
+              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700">
+                <p className="text-[10px] sm:text-xs text-slate-400 mb-1 sm:mb-2">Current Loss Streak</p>
+                <p className="text-base sm:text-xl font-bold text-red-400">{martingaleStats.currentLossStreak}</p>
+                <p className="text-[9px] sm:text-xs text-slate-500 mt-0.5">Longest: {martingaleStats.longestLossStreak}</p>
+              </div>
+            </div>
+          ) : (
           <MouseTooltip
             enabled={tooltipsEnabled}
             content={
@@ -869,6 +977,12 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
               </div>
             </div>
           </MouseTooltip>
+          )}
+
+          {/* Auto-mine configuration (preview) - sits under EV calculator */}
+          <div className="mt-3">
+            <AutoMinePanel />
+          </div>
 
           {/* Market Price vs Production Cost Chart - Hidden for now */}
           {false && (

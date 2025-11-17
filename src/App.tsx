@@ -8,11 +8,13 @@ import { TreasuryView } from './components/TreasuryView';
 import { LeaderboardView } from './components/LeaderboardView';
 import { StrategiesSoVView } from './components/StrategiesSoVView';
 import { MyProfileView } from './components/MyProfileView';
+import { MartingaleSimulationView } from './components/MartingaleSimulationView';
+import { WhatIsOreView } from './components/WhatIsOreView';
 
 const POLL_INTERVAL = 5000; // 5 seconds for main data
 const GRID_POLL_INTERVAL = 1000; // 1 second for grid updates
 
-type View = 'dashboard' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue';
+type View = 'dashboard' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore';
 
 // Main content component that uses routing
 function AppContent() {
@@ -110,6 +112,10 @@ function AppContent() {
     if (path === '/leaderboard') return 'leaderboard';
     if (path === '/strategies') return 'strategies';
     if (path === '/my-profile') return 'merch';
+    if (path === '/martingale') return 'martingale';
+    if (path === '/staking') return 'staking';
+    if (path === '/liquidity') return 'liquidity';
+    if (path === '/unrefined') return 'unrefined';
     return 'dashboard';
   };
 
@@ -139,9 +145,14 @@ function AppContent() {
           <Route path="/inflation" element={<TreasuryView currentView="inflation" />} />
           <Route path="/token" element={<TreasuryView currentView="token" />} />
           <Route path="/revenue" element={<TreasuryView currentView="revenue" />} />
+          <Route path="/staking" element={<TreasuryView currentView="staking" />} />
+          <Route path="/liquidity" element={<TreasuryView currentView="liquidity" />} />
+          <Route path="/unrefined" element={<TreasuryView currentView="unrefined" />} />
           <Route path="/leaderboard" element={<LeaderboardView />} />
           <Route path="/strategies" element={<StrategiesSoVView />} />
           <Route path="/my-profile" element={<MyProfileView />} />
+          <Route path="/martingale" element={<MartingaleSimulationView />} />
+          <Route path="/what-is-ore" element={<WhatIsOreView />} />
           <Route path="/" element={
             <div className="py-8 px-4">
               <div className="max-w-7xl mx-auto">

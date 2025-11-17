@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { getLeaderboard, getOreLeaders } from '../services/api';
 import { SolanaLogo } from './SolanaLogo';
 
@@ -298,44 +299,48 @@ export function LeaderboardView() {
               <table className="w-full">
                 <thead className="bg-slate-800/50 border-b border-slate-700">
                   <tr>
-                    <th className="px-3 sm:px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    <th className="px-2 sm:px-3 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
                       Rank
                     </th>
-                    <th className="px-3 sm:px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    <th className="px-2 sm:px-3 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">
                       Address
                     </th>
                     {/* Net SOL Change / Unrefined ORE - First after Address */}
-                    <th className="px-3 sm:px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    <th className="px-2 sm:px-3 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">
                       {displayMode === 'sol' ? 'Net SOL Change' : 'Unrefined ORE'}
-                      <div className="text-[10px] font-normal normal-case mt-1 text-slate-500">
+                      <div className="text-[10px] font-normal normal-case mt-0.5 text-slate-500">
                         {displayMode === 'sol' 
                           ? 'Earned - Deployed' 
                           : 'ORE waiting to be refined'}
                       </div>
                     </th>
-                    <th className="px-3 sm:px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden sm:table-cell">
-                      Total SOL Earned
-                      <div className="text-[10px] font-normal normal-case mt-1 text-slate-500">
-                        Lifetime SOL rewards
-                      </div>
-                    </th>
-                    <th className="px-3 sm:px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden sm:table-cell">
-                      Total SOL Deployed
-                      <div className="text-[10px] font-normal normal-case mt-1 text-slate-500">
-                        Lifetime SOL deployed
-                      </div>
-                    </th>
+                    {displayMode === 'sol' && (
+                      <>
+                        <th className="px-2 sm:px-3 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden sm:table-cell">
+                          Total SOL Earned
+                          <div className="text-[10px] font-normal normal-case mt-0.5 text-slate-500">
+                            Lifetime SOL rewards
+                          </div>
+                        </th>
+                        <th className="px-2 sm:px-3 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden sm:table-cell">
+                          Total SOL Deployed
+                          <div className="text-[10px] font-normal normal-case mt-0.5 text-slate-500">
+                            Lifetime SOL deployed
+                          </div>
+                        </th>
+                      </>
+                    )}
                     {displayMode === 'ore' && (
-                      <th className="px-3 sm:px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      <th className="px-2 sm:px-3 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">
                         Refined ORE
-                        <div className="text-[10px] font-normal normal-case mt-1 text-slate-500">
+                        <div className="text-[10px] font-normal normal-case mt-0.5 text-slate-500">
                           ORE that has been refined
                         </div>
                       </th>
                     )}
-                    <th className="px-3 sm:px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    <th className="px-2 sm:px-3 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">
                       {displayMode === 'sol' ? 'ORE Earned' : 'Total ORE Earned'}
-                      <div className="text-[10px] font-normal normal-case mt-1 text-slate-500">
+                      <div className="text-[10px] font-normal normal-case mt-0.5 text-slate-500">
                         {displayMode === 'sol' 
                           ? 'Lifetime ORE rewards' 
                           : 'Unrefined + Refined'}
@@ -343,21 +348,21 @@ export function LeaderboardView() {
                     </th>
                     {displayMode === 'sol' && (
                       <>
-                        <th className="px-3 sm:px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden md:table-cell">
+                        <th className="px-2 sm:px-3 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden md:table-cell">
                           Rounds Won
-                          <div className="text-[10px] font-normal normal-case mt-1 text-slate-500">
+                          <div className="text-[10px] font-normal normal-case mt-0.5 text-slate-500">
                             Total wins
                           </div>
                         </th>
-                        <th className="px-3 sm:px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
+                        <th className="px-2 sm:px-3 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
                           Rounds Played
-                          <div className="text-[10px] font-normal normal-case mt-1 text-slate-500">
+                          <div className="text-[10px] font-normal normal-case mt-0.5 text-slate-500">
                             Total rounds
                           </div>
                         </th>
-                        <th className="px-3 sm:px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
+                        <th className="px-2 sm:px-3 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider hidden lg:table-cell">
                           Win Rate
-                          <div className="text-[10px] font-normal normal-case mt-1 text-slate-500">
+                          <div className="text-[10px] font-normal normal-case mt-0.5 text-slate-500">
                             Win percentage
                           </div>
                         </th>
@@ -380,26 +385,35 @@ export function LeaderboardView() {
                         key={entry.pubkey || index}
                         className="hover:bg-slate-800/30 transition-colors"
                       >
-                        <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                        <td className="px-2 sm:px-3 py-2 whitespace-nowrap">
                           <div className="flex items-center">
                             <span className="text-sm font-bold text-slate-300">#{rank}</span>
                             {rank === 1 && (
-                              <span className="ml-2 text-yellow-400">👑</span>
+                              <span className="ml-1.5 text-yellow-400">👑</span>
                             )}
                           </div>
                         </td>
-                        <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
-                          <a
-                            href={`https://solscan.io/account/${entry.pubkey}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm font-mono text-slate-200 hover:text-amber-400 transition-colors"
-                          >
-                            {formatAddress(entry.pubkey)}
-                          </a>
+                        <td className="px-2 sm:px-3 py-2 whitespace-nowrap">
+                          {displayMode === 'ore' ? (
+                            <Link
+                              to={`/my-profile?wallet=${entry.pubkey}`}
+                              className="text-sm font-mono text-slate-200 hover:text-amber-400 transition-colors"
+                            >
+                              {formatAddress(entry.pubkey)}
+                            </Link>
+                          ) : (
+                            <a
+                              href={`https://solscan.io/account/${entry.pubkey}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm font-mono text-slate-200 hover:text-amber-400 transition-colors"
+                            >
+                              {formatAddress(entry.pubkey)}
+                            </a>
+                          )}
                         </td>
                         {/* Net SOL Change / Unrefined ORE - First after Address, only green */}
-                        <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right">
+                        <td className="px-2 sm:px-3 py-2 whitespace-nowrap text-right">
                           {displayMode === 'sol' ? (
                             <div className="flex items-center justify-end gap-1.5">
                               <SolanaLogo width={16} />
@@ -423,9 +437,29 @@ export function LeaderboardView() {
                             </div>
                           )}
                         </td>
+                        {displayMode === 'sol' && (
+                          <>
+                            <td className="px-2 sm:px-3 py-2 whitespace-nowrap text-right hidden sm:table-cell">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <SolanaLogo width={16} />
+                                <span className="text-sm font-semibold text-slate-200">
+                                  {formatSol(entry.total_sol_earned)}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-2 sm:px-3 py-2 whitespace-nowrap text-right hidden sm:table-cell">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <SolanaLogo width={16} />
+                                <span className="text-sm font-semibold text-slate-200">
+                                  {formatSol(entry.total_sol_deployed)}
+                                </span>
+                              </div>
+                            </td>
+                          </>
+                        )}
                         {/* Refined ORE - Only for ORE mode */}
                         {displayMode === 'ore' && (
-                          <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right">
+                          <td className="px-2 sm:px-3 py-2 whitespace-nowrap text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               <img 
                                 src="/orelogo.jpg" 
@@ -439,23 +473,7 @@ export function LeaderboardView() {
                             </div>
                           </td>
                         )}
-                        <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right hidden sm:table-cell">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <SolanaLogo width={16} />
-                            <span className="text-sm font-semibold text-slate-200">
-                              {formatSol(entry.total_sol_earned)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right hidden sm:table-cell">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <SolanaLogo width={16} />
-                            <span className="text-sm font-semibold text-slate-200">
-                              {formatSol(entry.total_sol_deployed)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right">
+                        <td className="px-2 sm:px-3 py-2 whitespace-nowrap text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <img 
                               src="/orelogo.jpg" 
@@ -470,17 +488,17 @@ export function LeaderboardView() {
                         </td>
                         {displayMode === 'sol' && (
                           <>
-                            <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right hidden md:table-cell">
+                            <td className="px-2 sm:px-3 py-2 whitespace-nowrap text-right hidden md:table-cell">
                               <span className="text-sm font-semibold text-slate-200">
                                 {entry.rounds_won.toLocaleString()}
                               </span>
                             </td>
-                            <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right hidden lg:table-cell">
+                            <td className="px-2 sm:px-3 py-2 whitespace-nowrap text-right hidden lg:table-cell">
                               <span className="text-sm font-semibold text-slate-200">
                                 {entry.rounds_played.toLocaleString()}
                               </span>
                             </td>
-                            <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right hidden lg:table-cell">
+                            <td className="px-2 sm:px-3 py-2 whitespace-nowrap text-right hidden lg:table-cell">
                               <span className="text-sm font-semibold text-slate-200">
                                 {formatPercentage(winRate)}
                               </span>
