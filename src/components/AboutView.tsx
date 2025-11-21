@@ -202,7 +202,12 @@ export function AboutView() {
                     </a>
                   </li>
                   <li>
-                    <a href="https://discord.com/invite/ore" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:text-amber-300 underline">
+                    <a
+                      href="https://discord.com/invite/4TQfshAAsT"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-amber-400 hover:text-amber-300 underline"
+                    >
                       Discord
                     </a>
                   </li>
@@ -217,7 +222,12 @@ export function AboutView() {
                     </a>
                   </li>
                   <li>
-                    <a href="https://twitter.com/ore" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:text-amber-300 underline">
+                    <a
+                      href="https://x.com/oredotmonster"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-amber-400 hover:text-amber-300 underline"
+                    >
                       X
                     </a>
                   </li>

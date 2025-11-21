@@ -9,6 +9,11 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/token/top-holders.ts": {
+      "maxDuration": 30
+    }
+  }
 }
 

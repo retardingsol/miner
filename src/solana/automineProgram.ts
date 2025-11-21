@@ -25,9 +25,16 @@ import {
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import BN from 'bn.js';
 
-// Program ID (will be set when program is deployed)
-// For now, using a placeholder that can be configured
-export const AUTOMINE_PROGRAM_ID = new PublicKey('11111111111111111111111111111111'); // Placeholder
+// ORE Program ID (found from analyzing transactions)
+// This is the actual ORE mining program on Solana mainnet
+export const ORE_PROGRAM_ID = new PublicKey('LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo');
+
+// ORE Token Mint Address
+export const ORE_MINT = new PublicKey('oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp');
+
+// Legacy AutoMine Manager Program ID (not used in Option B - direct integration)
+// Kept for reference if Option A is implemented later
+export const AUTOMINE_PROGRAM_ID = new PublicKey('11111111111111111111111111111111'); // Placeholder - not used
 
 /**
  * AutoMine Configuration

@@ -3,7 +3,7 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useNavigate } from 'react-router-dom';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { SolanaLogo } from './SolanaLogo';
-import { getWalletBalances, getHealth } from '../services/api';
+import { getWalletBalances, getHealth, getState, getBids, getMinerStats } from '../services/api';
 import type { PriceSnapshot } from '../types/api';
 
 // Loading indicator component
@@ -30,6 +30,7 @@ interface WalletMenuProps {
 }
 
 const DONATE_ADDRESS = '3copeQ922WcSc5uqZbESgZ3TrfnEA8UEGHJ4EvkPAtHS';
+const ORE_CONVERSION_FACTOR = 1e11;
 
 interface HealthStatus {
   overall: 'connected' | 'disconnected';
@@ -111,39 +112,51 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
       // Check /state endpoint
       const stateStart = performance.now();
       try {
-        const stateResponse = await fetch('https://ore-api.gmore.fun/state');
+        await getState();
         const stateTime = ((performance.now() - stateStart) / 1000).toFixed(2);
-        if (stateResponse.ok) {
-          setHealthStatus(prev => ({
-            ...prev,
-            state: {
-              connected: true,
-              responseTime: parseFloat(stateTime),
-              lastSuccess: new Date(),
-            },
-          }));
-        }
+        setHealthStatus(prev => ({
+          ...prev,
+          state: {
+            connected: true,
+            responseTime: parseFloat(stateTime),
+            lastSuccess: new Date(),
+          },
+        }));
       } catch (e) {
         // State check failed
+        setHealthStatus(prev => ({
+          ...prev,
+          state: {
+            connected: false,
+            responseTime: null,
+            lastSuccess: prev.state.lastSuccess,
+          },
+        }));
       }
 
       // Check /bids endpoint
       const bidsStart = performance.now();
       try {
-        const bidsResponse = await fetch('https://ore-api.gmore.fun/bids');
+        await getBids();
         const bidsTime = ((performance.now() - bidsStart) / 1000).toFixed(2);
-        if (bidsResponse.ok) {
-          setHealthStatus(prev => ({
-            ...prev,
-            bids: {
-              connected: true,
-              responseTime: parseFloat(bidsTime),
-              lastSuccess: new Date(),
-            },
-          }));
-        }
+        setHealthStatus(prev => ({
+          ...prev,
+          bids: {
+            connected: true,
+            responseTime: parseFloat(bidsTime),
+            lastSuccess: new Date(),
+          },
+        }));
       } catch (e) {
         // Bids check failed
+        setHealthStatus(prev => ({
+          ...prev,
+          bids: {
+            connected: false,
+            responseTime: null,
+            lastSuccess: prev.bids.lastSuccess,
+          },
+        }));
       }
 
       const overallConnected = health.hasTreasurySnapshot && health.hasRoundSnapshot;
@@ -191,16 +204,43 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
         });
         setOreBalancesLoading(false);
       })
-      .catch((error) => {
+      .catch(async (error) => {
         console.error('Error fetching ORE balances:', error);
-        setOreBalances({
-          wallet: '0',
-          staked: '0',
-          refined: '0',
-          unrefined: '0',
-          total: '0',
-        });
-        setOreBalancesLoading(false);
+        // Fallback: approximate balances from miner stats so sidebar still shows something useful
+        try {
+          const stats = await getMinerStats(address);
+          const unrefined =
+            typeof stats.rewards_ore === 'number'
+              ? stats.rewards_ore / ORE_CONVERSION_FACTOR
+              : 0;
+          const refined =
+            typeof stats.refined_ore === 'number'
+              ? stats.refined_ore / ORE_CONVERSION_FACTOR
+              : 0;
+          const wallet = 0;
+          const staked = 0;
+          const total = unrefined + refined + staked + wallet;
+
+          setOreBalances({
+            wallet: wallet.toString(),
+            staked: staked.toString(),
+            refined: refined.toString(),
+            unrefined: unrefined.toString(),
+            total: total.toString(),
+          });
+        } catch (fallbackErr) {
+          console.error('Fallback miner stats for ORE balances also failed:', fallbackErr);
+          // Final fallback: show zeros but stop the spinner
+          setOreBalances({
+            wallet: '0',
+            staked: '0',
+            refined: '0',
+            unrefined: '0',
+            total: '0',
+          });
+        } finally {
+          setOreBalancesLoading(false);
+        }
       });
   };
 
@@ -274,7 +314,7 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
     <>
       {/* Overlay with blur effect */}
       <div
-        className={`fixed inset-0 z-[60] bg-black/60 backdrop-blur-md transition-opacity duration-700 ease-in-out ${
+        className={`fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm transition-opacity duration-700 ease-in-out ${
           isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         onClick={onClose}

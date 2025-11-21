@@ -175,6 +175,12 @@ interface GridVisualizationProps {
   selectedSquare?: number | null; // 1-25 for Martingale strategy
   currentBet?: number | null; // Current bet amount in SOL for selected square
   martingaleStats?: MartingaleStats | null; // Stats for Martingale strategy
+  userBets?: number[] | null; // Array of 25 SOL amounts (0-24 index) for user's bets on each square
+  roundResults?: {
+    roundId: string;
+    solWon: number;
+    oreWon: number;
+  } | null; // Results from the last completed round
 }
 
 interface PriceCostDataPoint {
@@ -185,7 +191,7 @@ interface PriceCostDataPoint {
   date: Date;
 }
 
-export function GridVisualization({ perSquare, winningSquareIndex, countdown, uniqueMiners, totalBids, roundId, state, roundResult, roundStatus, selectedSquare, currentBet, martingaleStats }: GridVisualizationProps) {
+export function GridVisualization({ perSquare, winningSquareIndex, countdown, uniqueMiners, totalBids, roundId, state, roundResult, roundStatus, selectedSquare, currentBet, martingaleStats, userBets, roundResults }: GridVisualizationProps) {
   const [barWidths, setBarWidths] = useState<number[]>(Array(25).fill(0));
   const [barColors, setBarColors] = useState<string[]>(Array(25).fill('bg-slate-500'));
   const [tooltipsEnabled, setTooltipsEnabled] = useState(true);
@@ -369,6 +375,15 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                 
                 // Check if this is the selected square for Martingale strategy (convert from 1-25 to 0-24 index)
                 const isSelectedSquare = selectedSquare !== null && selectedSquare !== undefined && (selectedSquare - 1) === index;
+                
+                // Check if user has bet on this square (only show if there's a meaningful amount)
+                const userBetAmount = userBets && userBets[index] > 0 ? userBets[index] : 0;
+                const MIN_DISPLAY_THRESHOLD = 0.0001; // Only show if above threshold
+                const hasUserBet = userBetAmount >= MIN_DISPLAY_THRESHOLD;
+                
+                // Highlight if user bet on it (yellow border similar to ore.supply)
+                // Only highlight if it's a confirmed bet (not just UI state)
+                const isUserBetSquare = hasUserBet && !isWinningSquare && userBets !== null;
 
                 const showWinningStats = isWinningSquare && (roundStatus === 'expired' || roundStatus === 'finished') && roundResult?.resultAvailable;
                 
@@ -436,6 +451,8 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                           ? 'bg-green-900/30 border-green-500 ring-2 ring-green-500/50' 
                           : isSelectedSquare
                           ? 'bg-amber-900/20 border-amber-500 ring-2 ring-amber-500/50'
+                          : isUserBetSquare
+                          ? 'bg-amber-900/20 border-amber-500 ring-2 ring-amber-500/50'
                           : 'bg-[#202a3e] border-slate-600/50'
                       } ${showWinningStats && tooltipsEnabled ? 'cursor-help' : ''}`}
                     >
@@ -458,6 +475,15 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                             <SolanaLogo width={8} className="sm:w-2.5" />
                             <p className="text-[8px] sm:text-[9px] lg:text-[10px] font-bold text-amber-400">
                               {currentBet.toFixed(3)}
+                            </p>
+                          </div>
+                        )}
+                        {/* User Bet Amount for this square - only show confirmed on-chain bets */}
+                        {!isSelectedSquare && !isWinningSquare && hasUserBet && userBets !== null && (
+                          <div className="absolute top-full right-0 mt-0.5 flex items-center gap-0.5 sm:gap-1 bg-amber-500/20 border border-amber-500/50 rounded px-1 sm:px-1.5 py-0.5 z-10">
+                            <SolanaLogo width={8} className="sm:w-2.5" />
+                            <p className="text-[8px] sm:text-[9px] lg:text-[10px] font-bold text-amber-400">
+                              {userBetAmount.toFixed(4)}
                             </p>
                           </div>
                         )}
@@ -510,7 +536,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                   </>
                 }
               >
-                <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full flex flex-col">
+                <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
                   <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
                     <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
@@ -540,7 +566,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                   </>
                 }
               >
-                <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full flex flex-col">
+                <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
                   <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
                     <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
@@ -573,7 +599,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                   </>
                 }
               >
-                <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full flex flex-col">
+                <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
                   <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
                     <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zM17 6a3 3 0 11-6 0 3 3 0 016 0zM12.93 17c.046-.327.07-.66.07-1a6.97 6.97 0 00-1.5-4.33A5 5 0 0119 16v1h-6.07zM6 11a5 5 0 015 5v1H1v-1a5 5 0 015-5z" />
@@ -603,7 +629,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                 </>
               }
             >
-              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full flex flex-col">
+              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
                 <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
                   <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
@@ -630,7 +656,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                 </>
               }
             >
-              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full flex flex-col">
+              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
                 <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
                   <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
@@ -671,7 +697,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                 </>
               }
             >
-              <div className="bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full flex flex-col">
+              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
                 <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
                   <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z" />
@@ -690,9 +716,41 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
             </MouseTooltip>
           </div>
 
+          {/* Round Results Display - Shows SOL and ORE won after round ends */}
+          {roundResults && (
+            <div className="mb-3 p-3 bg-green-900/30 border border-green-500 rounded-lg animate-pulse">
+              <div className="flex items-center gap-2 mb-2">
+                <svg className="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                <p className="text-sm font-semibold text-green-400">Round #{roundResults.roundId} Results</p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {roundResults.solWon > 0 && (
+                  <div className="flex items-center gap-2">
+                    <SolanaLogo width={20} height={20} />
+                    <div>
+                      <p className="text-xs text-slate-400">SOL Won</p>
+                      <p className="text-lg font-bold text-green-400">{roundResults.solWon.toFixed(4)}</p>
+                    </div>
+                  </div>
+                )}
+                {roundResults.oreWon > 0 && (
+                  <div className="flex items-center gap-2">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-5 h-5 object-contain rounded" />
+                    <div>
+                      <p className="text-xs text-slate-400">ORE Won</p>
+                      <p className="text-lg font-bold text-amber-400">{roundResults.oreWon.toFixed(4)}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Auto-mine configuration */}
           <div className="mb-3">
-            <AutoMinePanel disabled={true} />
+            <AutoMinePanel />
           </div>
 
           {/* EV CALCULATOR - Hidden on Martingale page */}
@@ -725,7 +783,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                 </>
               }
             >
-              <div className="bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors cursor-help h-full">
+              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors h-full ${tooltipsEnabled ? 'cursor-help' : ''}`}>
                 <div className="flex items-center gap-1 sm:gap-1.5 mb-2 sm:mb-3 min-w-0">
                   <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                     <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
@@ -887,38 +945,44 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
           
           {/* Color Coding Help Icon and Tooltip Toggle - Bottom of right side */}
           <div className="flex items-center justify-center gap-3 pt-4 mt-auto">
-            <MouseTooltip
-              enabled={tooltipsEnabled}
-              content={
-                <>
-                  <p className="text-xs text-slate-300 mb-2 font-semibold">Color Coding:</p>
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex items-start gap-2">
-                      <div className="w-3 h-3 bg-green-500 rounded mt-0.5 flex-shrink-0" />
-                      <span className="text-slate-300">Above average activity</span>
+            <div className="relative group">
+              <MouseTooltip
+                enabled={tooltipsEnabled}
+                content={
+                  <>
+                    <p className="text-xs text-slate-300 mb-2 font-semibold">Color Coding:</p>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-start gap-2">
+                        <div className="w-3 h-3 bg-green-500 rounded mt-0.5 flex-shrink-0" />
+                        <span className="text-slate-300">Above average activity</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <div className="w-3 h-3 bg-yellow-500 rounded mt-0.5 flex-shrink-0" />
+                        <span className="text-slate-300">Near average activity (within 0.5 std dev)</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <div className="w-3 h-3 bg-red-500 rounded mt-0.5 flex-shrink-0" />
+                        <span className="text-slate-300">Below average activity</span>
+                      </div>
                     </div>
-                    <div className="flex items-start gap-2">
-                      <div className="w-3 h-3 bg-yellow-500 rounded mt-0.5 flex-shrink-0" />
-                      <span className="text-slate-300">Near average activity (within 0.5 std dev)</span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <div className="w-3 h-3 bg-red-500 rounded mt-0.5 flex-shrink-0" />
-                      <span className="text-slate-300">Below average activity</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-3 leading-relaxed">
-                    The indicator bar at the bottom of each square shows the relative activity level compared to the average across all squares.
-                  </p>
-                </>
-              }
-            >
-              <div className="cursor-help flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors">
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-                </svg>
-                <span className="text-xs text-slate-400">Color Coding</span>
-              </div>
-            </MouseTooltip>
+                    <p className="text-xs text-slate-400 mt-3 leading-relaxed">
+                      The indicator bar at the bottom of each square shows the relative activity level compared to the average across all squares.
+                    </p>
+                  </>
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => {}} // Always clickable, shows tooltip when enabled
+                  className={`flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors cursor-pointer ${tooltipsEnabled ? '' : ''}`}
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                  </svg>
+                  <span className="text-xs text-slate-400">Color Coding</span>
+                </button>
+              </MouseTooltip>
+            </div>
             
             {/* Tooltip Toggle Switch */}
             <div className="flex items-center gap-2">
@@ -1085,4 +1149,3 @@ function PriceCostChart({ data }: { data: PriceCostDataPoint[] }) {
     </ResponsiveContainer>
   );
 }
-

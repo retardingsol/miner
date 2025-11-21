@@ -6,35 +6,167 @@ import type {
   BidsResponse,
   HealthResponse,
   VersionResponse,
+  RoundSnapshot,
+  RoundResultSnapshot,
+  TreasurySnapshot,
 } from '../types/api';
 
 /**
+ * Retry fetch with exponential backoff for rate limiting
+ */
+async function fetchWithRetry(
+  url: string,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<Response> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const response = await fetch(url);
+    
+    if (response.status === 429 && attempt < maxRetries - 1) {
+      // Rate limited - wait and retry with exponential backoff
+      const delay = baseDelay * Math.pow(2, attempt);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      continue;
+    }
+    
+    return response;
+  }
+  
+  // Final attempt failed
+  const finalResponse = await fetch(url);
+  return finalResponse;
+}
+
+/**
  * Fetches the complete state snapshot from the ORE API
+ * Transforms the new v2 API format to the expected StateResponse format
  */
 export async function getState(): Promise<StateResponse> {
-  const response = await fetch(`${API_BASE_URL}/state`);
+  // In development, use Vite proxy; in production, use serverless function
+  const apiUrl = import.meta.env.DEV 
+    ? '/api/ore-v2/state'      // Vite proxy (configured in vite.config.ts)
+    : '/api/ore-api/v2/state'; // Vercel serverless function
+  
+  const response = await fetchWithRetry(apiUrl);
   
   if (!response.ok) {
     if (response.status === 503) {
       throw new Error('Service unavailable. Both treasury and round snapshots are unavailable.');
     }
+    if (response.status === 429) {
+      throw new Error('Rate limited. Please wait a moment and try again.');
+    }
     throw new Error(`Failed to fetch state: ${response.status} ${response.statusText}`);
   }
   
-  return response.json();
+  const data = await response.json();
+  
+  // Transform v2 API format to expected StateResponse format
+  // v2 format: { frames: [{ roundId, liveData: {...}, optimisticWinner, finalWinner }], globals: { treasury, currentSlot, orePrice, solPrice }, currentRoundId, latestFinalizedRoundId }
+  
+  const globals = data.globals || {};
+  const frames = data.frames || [];
+  
+  // Get the current round (first frame is typically the current/active round)
+  const currentFrame = frames.find((f: any) => f.roundId === data.currentRoundId) || frames[0];
+  const liveData = currentFrame?.liveData;
+  
+  // Transform round data
+  const round: RoundSnapshot | null = liveData ? {
+    observedAt: liveData.observedAt || '',
+    roundId: liveData.roundId || currentFrame.roundId || '',
+    mining: {
+      startSlot: liveData.mining?.startSlot || '0',
+      endSlot: liveData.mining?.endSlot || '0',
+      remainingSlots: liveData.mining?.remainingSlots || '0',
+      status: (liveData.mining?.status || 'idle') as 'idle' | 'active' | 'finished' | 'expired',
+    },
+    uniqueMiners: liveData.uniqueMiners || '0',
+    totals: {
+      deployedSol: liveData.totals?.deployedSol || '0',
+      vaultedSol: liveData.totals?.vaultedSol || '0',
+      winningsSol: liveData.totals?.winningsSol || '0',
+    },
+    perSquare: {
+      counts: liveData.perSquare?.counts || Array(25).fill('0'),
+      deployedSol: liveData.perSquare?.deployedSol || Array(25).fill('0'),
+    },
+  } : null;
+  
+  // Transform round result (use finalWinner if available, otherwise optimisticWinner)
+  const winner = currentFrame?.finalWinner || currentFrame?.optimisticWinner;
+  const roundResult: RoundResultSnapshot | null = winner && winner.resultAvailable ? {
+    roundId: winner.roundId || '',
+    resultAvailable: winner.resultAvailable || false,
+    status: winner.status || 'ready',
+    winningSquareLabel: winner.winningSquareLabel || '',
+    winningSquareIndex: winner.winningSquareIndex !== undefined ? winner.winningSquareIndex : undefined,
+    motherlodeHit: winner.motherlodeHit || false,
+    motherlodeFormatted: winner.motherlodeFormatted || '0',
+    totalDeployedSol: winner.totalDeployedSol || '0',
+    totalVaultedSol: winner.totalVaultedSol || '0',
+    totalWinningsSol: winner.totalWinningsSol || '0',
+    individualWinner: winner.topMiner || undefined,
+    individualWinnerAddress: winner.topMiner && winner.topMiner !== '11111111111111111111111111111111' ? winner.topMiner : undefined,
+  } : null;
+  
+  // Transform treasury
+  const treasury: TreasurySnapshot | null = globals.treasury ? {
+    observedAt: globals.treasury.observedAt || '',
+    motherlodeFormatted: globals.treasury.motherlodeFormatted || '0',
+  } : null;
+  
+  // Return transformed response
+  return {
+    treasury,
+    round,
+    currentSlot: globals.currentSlot || null,
+    orePrice: globals.orePrice || null,
+    solPrice: globals.solPrice || null,
+    roundResult,
+  };
 }
 
 /**
  * Fetches sorted list of miner deployments for the active round
  */
 export async function getBids(): Promise<BidsResponse> {
-  const response = await fetch(`${API_BASE_URL}/bids`);
+  // In development, use Vite proxy; in production, use serverless function
+  const apiUrl = import.meta.env.DEV 
+    ? '/api/ore-v2/bids'       // Vite proxy (configured in vite.config.ts)
+    : '/api/ore-api/v2/bids';  // Vercel serverless function
+  
+  const response = await fetchWithRetry(apiUrl);
   
   if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error('Rate limited. Please wait a moment and try again.');
+    }
     throw new Error(`Failed to fetch bids: ${response.status} ${response.statusText}`);
   }
   
-  return response.json();
+  const data = await response.json();
+  
+  // Transform v2 API format: the response has a nested structure
+  // v2 format: { roundId: "...", bids: { roundId: "...", collectedAt: "...", uniqueMiners: ..., bids: [...] } }
+  // Expected format: { roundId: "...", collectedAt: "...", uniqueMiners: ..., bids: [...] }
+  if (data.bids && typeof data.bids === 'object' && !Array.isArray(data.bids)) {
+    // If bids is an object (nested structure), extract it
+    return {
+      roundId: data.bids.roundId || data.roundId || '',
+      collectedAt: data.bids.collectedAt || '',
+      uniqueMiners: data.bids.uniqueMiners || 0,
+      bids: Array.isArray(data.bids.bids) ? data.bids.bids : [],
+    };
+  }
+  
+  // Already in the expected format or has bids array directly
+  return {
+    roundId: data.roundId || '',
+    collectedAt: data.collectedAt || '',
+    uniqueMiners: data.uniqueMiners || 0,
+    bids: Array.isArray(data.bids) ? data.bids : [],
+  };
 }
 
 /**
@@ -1000,6 +1132,206 @@ export async function getWalletBalances(walletAddress: string): Promise<{
     if (error instanceof TypeError && error.message === 'Failed to fetch') {
       throw new Error('Network error: Unable to reach balances API. This may be a CORS issue.');
     }
+    throw error;
+  }
+}
+
+/**
+ * Fetches miners statistics data
+ */
+export async function getMinersData(timeframe: string = '3d'): Promise<{
+  stats: {
+    totalUnique: number;
+    active: number;
+    newToday: number;
+    retentionRate: string;
+  };
+  uniqueOverTime: Array<{
+    date: string;
+    unique_miners: number;
+  }>;
+  newPerDay: Array<{
+    date: string;
+    new_miners: number;
+  }>;
+  newVsReturning: Array<{
+    date: string;
+    new_miners: number;
+    returning_miners: number;
+  }>;
+  activityDistribution: Array<{
+    count: number;
+    category: string;
+    percentage: number;
+  }>;
+  cohortDeployment: Array<{
+    date: string;
+    new_avg: string;
+    returning_avg: string;
+  }>;
+  retentionFunnel: Array<{
+    milestone: string;
+    count: number;
+    percentage: number;
+  }>;
+  topActive: Array<{
+    wallet_address: string;
+    total_rounds: number;
+    win_count: number;
+    win_rate: string;
+    net_sol: string;
+  }>;
+}> {
+  try {
+    const apiUrl = import.meta.env.DEV 
+      ? `/api/miners/all?timeframe=${timeframe}`
+      : `/api/miners/all?timeframe=${timeframe}`;
+    const response = await fetch(apiUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch miners data: ${response.status} ${response.statusText}`);
+    }
+    
+    return response.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      throw new Error('Network error: Unable to reach miners API. This may be a CORS issue.');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Get top ORE token holders using getTokenLargestAccounts (returns top 20)
+ * This gives us the actual on-chain token balance (includes all ORE: staked, unrefined, refined, wallet)
+ * Returns the top 20 largest token accounts and fetches their owner addresses
+ */
+export async function getTopOreHolders(limit: number = 20): Promise<Array<{
+  address: string;
+  balance: number; // In smallest ORE unit
+  owner: string;
+}>> {
+  try {
+    const HELIUS_API_KEY = '0979183a-9a9d-4b85-8278-3a82dae7e804';
+    const HELIUS_RPC_URL = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}`;
+    const ORE_MINT = 'oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp';
+    
+    console.log('📊 Fetching top 20 ORE holders using getTokenLargestAccounts...');
+    
+    // Use getTokenLargestAccounts which returns top 20 accounts
+    const requestBody = {
+      jsonrpc: '2.0',
+      id: '1',
+      method: 'getTokenLargestAccounts',
+      params: [
+        ORE_MINT,
+        {
+          commitment: 'finalized'
+        }
+      ],
+    };
+    
+    const response = await fetch(HELIUS_RPC_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Helius API error: ${response.status} ${response.statusText}`);
+    }
+    
+    const responseText = await response.text();
+    
+    // Check if response is JSON
+    if (!responseText.trim().startsWith('{')) {
+      throw new Error(`Helius API returned non-JSON response: ${responseText.substring(0, 200)}`);
+    }
+    
+    const data = JSON.parse(responseText);
+    
+    if (data.error) {
+      throw new Error(`Helius API error: ${JSON.stringify(data.error)}`);
+    }
+    
+    if (!data.result || !data.result.value) {
+      throw new Error('Invalid response format from Helius API');
+    }
+    
+    const tokenAccounts = data.result.value || [];
+    
+    // Fetch owner info for each token account
+    const holdersWithOwners = await Promise.all(
+      tokenAccounts.map(async (account: any) => {
+        // Get account info to find owner
+        const accountInfoRequest = {
+          jsonrpc: '2.0',
+          id: '1',
+          method: 'getAccountInfo',
+          params: [
+            account.address,
+            {
+              encoding: 'jsonParsed',
+            }
+          ],
+        };
+        
+        try {
+          const accountResponse = await fetch(HELIUS_RPC_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(accountInfoRequest),
+          });
+          
+          const accountData = await accountResponse.json();
+          
+          let owner = '';
+          // Extract owner from parsed account data
+          if (accountData.result?.value?.data?.parsed?.info?.owner) {
+            owner = accountData.result.value.data.parsed.info.owner;
+          } else if (accountData.result?.value?.owner) {
+            owner = accountData.result.value.owner;
+          }
+          
+          // Parse amount - uiAmountString is already human-readable, but we need raw amount
+          const amount = typeof account.amount === 'string' ? parseInt(account.amount, 10) : (account.amount || 0);
+          
+          return {
+            address: account.address,
+            balance: amount,
+            owner: owner || account.address, // Fallback to address if owner not found
+          };
+        } catch (err) {
+          console.warn(`Failed to fetch owner for ${account.address}:`, err);
+          // Return with address as owner fallback
+          const amount = typeof account.amount === 'string' ? parseInt(account.amount, 10) : (account.amount || 0);
+          return {
+            address: account.address,
+            balance: amount,
+            owner: account.address,
+          };
+        }
+      })
+    );
+    
+    // Filter out invalid entries and sort by balance
+    const topHolders = holdersWithOwners
+      .filter(h => h.address && h.balance > 0)
+      .sort((a, b) => b.balance - a.balance)
+      .slice(0, Math.min(limit, 20)); // getTokenLargestAccounts only returns 20
+    
+    console.log(`📊 Found ${topHolders.length} top ORE holders`);
+    if (topHolders.length > 0) {
+      console.log('📊 Top holders:', topHolders.slice(0, 5));
+    }
+    
+    return topHolders;
+  } catch (error) {
+    console.error('Error fetching top ORE holders:', error);
     throw error;
   }
 }

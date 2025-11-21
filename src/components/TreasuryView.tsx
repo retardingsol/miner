@@ -180,21 +180,32 @@ export function TreasuryView({ currentView = 'treasury' }: TreasuryViewProps) {
       try {
         setInflationLoading(true);
         setError(null);
-        const [supply, current, minted, emissions] = await Promise.all([
+        
+        // Load critical data first for fast initial render
+        const [supply, current, minted] = await Promise.all([
           getSupplyOnMarket(),
           getInflationCurrent(),
-          get24hMinted(),
-          getNetEmissions(30).catch(() => []) // Fetch 30 days, fallback to empty array if fails
+          get24hMinted()
         ]);
         setSupplyOnMarket(supply);
         setInflationCurrent(current);
         setMinted24h(minted);
-        setNetEmissions(emissions);
+        
+        // Set loading to false once critical data is loaded
+        setInflationLoading(false);
+        
+        // Load slower historical data in background
+        try {
+          const emissions = await getNetEmissions(30);
+          setNetEmissions(emissions);
+        } catch (err) {
+          console.error('Error fetching net emissions (non-critical):', err);
+          setNetEmissions([]); // Set empty array as fallback
+        }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to fetch inflation data';
         setError(errorMessage);
         console.error('Error fetching inflation data:', err);
-      } finally {
         setInflationLoading(false);
       }
     };

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { PriceSnapshot } from '../types/api';
 import { SolanaLogo } from './SolanaLogo';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
@@ -7,6 +7,7 @@ import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMenu } from './WalletMenu';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { getWalletBalances } from '../services/api';
+import { PublicKey } from '@solana/web3.js';
 
 // Type declaration for window.solana
 declare global {
@@ -20,7 +21,7 @@ declare global {
   }
 }
 
-type View = 'dashboard' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore';
+type View = 'dashboard' | 'mines' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore' | 'miners' | 'dust-to-ore';
 
 // Custom wallet connect button that shows "Connect" when disconnected
 function WalletConnectButtonCustom({ onWalletClick, onMobileWalletClick }: { onWalletClick?: () => void; onMobileWalletClick?: () => void }) {
@@ -110,6 +111,7 @@ interface HeaderProps {
 
 export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMenuOpen: externalWalletMenuOpen, setWalletMenuOpen: setExternalWalletMenuOpen }: HeaderProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { publicKey, connected, disconnect } = useWallet();
   const { connection } = useConnection();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -117,6 +119,10 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
   const [mobileStatsDropdownOpen, setMobileStatsDropdownOpen] = useState(false);
   const [stakingSubmenuOpen, setStakingSubmenuOpen] = useState(false);
   const [stakingSubmenuTimeout, setStakingSubmenuTimeout] = useState<number | null>(null);
+  const [walletSearch, setWalletSearch] = useState('');
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchBarOpen, setSearchBarOpen] = useState(false);
+  const [mobileSearchBarOpen, setMobileSearchBarOpen] = useState(false);
   
   // Wallet data for mobile menu
   const [mobileSolBalance, setMobileSolBalance] = useState<number | null>(null);
@@ -133,6 +139,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
   const getCurrentView = (): View => {
     if (currentView) return currentView;
     const path = location.pathname;
+    if (path === '/' || path === '/home') return 'mines';
     if (path === '/about') return 'about';
     if (path === '/treasury') return 'treasury';
     if (path === '/inflation') return 'inflation';
@@ -145,7 +152,9 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
     if (path === '/staking') return 'staking';
     if (path === '/liquidity') return 'liquidity';
     if (path === '/unrefined') return 'unrefined';
+    if (path === '/miners') return 'miners';
     if (path === '/what-is-ore') return 'what-is-ore';
+    if (path === '/dust-to-ore') return 'dust-to-ore';
     return 'dashboard';
   };
 
@@ -232,9 +241,54 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
     return solValue + oreValue;
   };
 
+  // Handle wallet search
+  const handleWalletSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSearchError(null);
+    
+    const trimmed = walletSearch.trim();
+    if (!trimmed) return;
+    
+    try {
+      // Validate wallet address
+      const pubkey = new PublicKey(trimmed);
+      // Navigate to profile page with wallet address
+      navigate(`/my-profile?wallet=${pubkey.toBase58()}`);
+      setWalletSearch('');
+      setSearchBarOpen(false);
+      setMobileSearchBarOpen(false);
+    } catch (err) {
+      setSearchError('Invalid wallet address');
+      setTimeout(() => setSearchError(null), 3000);
+    }
+  };
+
+  // Close search modal on Esc key and prevent body scroll
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && searchBarOpen) {
+        setSearchBarOpen(false);
+        setWalletSearch('');
+        setSearchError(null);
+      }
+    };
+
+    if (searchBarOpen) {
+      // Prevent body scroll when modal is open
+      document.body.style.overflow = 'hidden';
+      document.addEventListener('keydown', handleEscape);
+      return () => {
+        document.body.style.overflow = '';
+        document.removeEventListener('keydown', handleEscape);
+      };
+    } else {
+      document.body.style.overflow = '';
+    }
+  }, [searchBarOpen]);
+
   return (
     <header className="bg-black border-b border-slate-700 sticky top-0 z-50 min-h-[65px] flex items-center shrink-0">
-      <div className="max-w-7xl mx-auto px-4 py-3 w-full flex items-center justify-between min-h-[65px]">
+      <div className="w-full px-4 py-3 flex items-center justify-between min-h-[65px]">
             {/* Logo and Navigation - left */}
             <div className="flex items-center gap-2 sm:gap-4 lg:gap-8 min-w-0 flex-shrink-0">
               <Link
@@ -252,6 +306,17 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
               
               {/* Desktop Navigation */}
               <nav className="hidden lg:flex items-center gap-2">
+              <Link
+                to="/"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                  activeView === 'mines'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded" />
+                Mines
+              </Link>
               <Link
                 to="/about"
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
@@ -299,7 +364,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
                 <button
                   onClick={() => setStatsDropdownOpen(!statsDropdownOpen)}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                    ['treasury', 'inflation', 'token', 'revenue', 'strategies', 'staking', 'liquidity', 'unrefined', 'martingale'].includes(activeView)
+                    ['treasury', 'inflation', 'token', 'revenue', 'strategies', 'staking', 'liquidity', 'unrefined', 'martingale', 'miners'].includes(activeView)
                       ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                   }`}
@@ -516,44 +581,73 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
                   </div>
                 )}
               </div>
+              <Link
+                to="/dust-to-ore"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                  activeView === 'dust-to-ore'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+                Dust to ORE
+              </Link>
             </nav>
         </div>
 
-        {/* Prices and Health - right */}
-        <div className="flex items-center gap-1.5 sm:gap-3 lg:gap-6 flex-shrink-0 ml-2 sm:ml-0">
+        {/* Prices, Search, and Wallet - right */}
+        <div className="flex items-center gap-1.5 sm:gap-3 lg:gap-4 flex-shrink-0 ml-2 sm:ml-0">
           {/* Solana Price */}
-          {solPrice && (
-            <a
-              href="https://jup.ag/tokens/So11111111111111111111111111111111111111112"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 sm:gap-2 hover:opacity-80 transition-opacity cursor-pointer flex-shrink-0"
-            >
-              <SolanaLogo width={16} height={16} className="sm:w-6 sm:h-6" />
-              <span className="text-slate-200 font-medium whitespace-nowrap text-xs sm:text-base">
-                ${parseFloat(solPrice.priceUsdRaw).toFixed(2)}
-              </span>
-            </a>
-          )}
+          <a
+            href="https://jup.ag/tokens/So11111111111111111111111111111111111111112"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 sm:gap-2 hover:opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+          >
+            <SolanaLogo width={16} height={16} className="sm:w-6 sm:h-6" />
+            <span className="text-slate-200 font-medium whitespace-nowrap text-xs sm:text-base">
+              {solPrice ? `$${parseFloat(solPrice.priceUsdRaw).toFixed(2)}` : '...'}
+            </span>
+          </a>
 
           {/* ORE Price */}
-          {orePrice && (
-            <a
-              href="https://jup.ag/tokens/oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 sm:gap-2 hover:opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+          <a
+            href="https://jup.ag/tokens/oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 sm:gap-2 hover:opacity-80 transition-opacity cursor-pointer flex-shrink-0"
+          >
+            <img 
+              src="/orelogo.jpg" 
+              alt="ORE" 
+              className="w-3.5 h-3.5 sm:w-5 sm:h-5 object-contain rounded flex-shrink-0"
+            />
+            <span className="text-slate-200 font-medium whitespace-nowrap text-xs sm:text-base">
+              {orePrice ? `$${parseFloat(orePrice.priceUsdRaw).toFixed(2)}` : '...'}
+            </span>
+          </a>
+
+          {/* Wallet Search Button - Next to prices */}
+          <div className="hidden md:flex items-center">
+            <button
+              onClick={() => {
+                setSearchBarOpen(true);
+                // Focus input after it renders
+                setTimeout(() => {
+                  const input = document.querySelector('.wallet-search-modal-input') as HTMLInputElement;
+                  input?.focus();
+                }, 0);
+              }}
+              className="p-2 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition-colors"
+              aria-label="Open wallet search"
             >
-              <img 
-                src="/orelogo.jpg" 
-                alt="ORE" 
-                className="w-3.5 h-3.5 sm:w-5 sm:h-5 object-contain rounded flex-shrink-0"
-              />
-              <span className="text-slate-200 font-medium whitespace-nowrap text-xs sm:text-base">
-                ${parseFloat(orePrice.priceUsdRaw).toFixed(2)}
-              </span>
-            </a>
-          )}
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </button>
+          </div>
 
           {/* Mobile Connect Button - Next to prices */}
           <div className="sm:hidden">
@@ -629,6 +723,73 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
+              </div>
+
+              {/* Wallet Search Bar - Mobile */}
+              <div className="px-4 pt-4 pb-4 border-b border-slate-700">
+                {!mobileSearchBarOpen ? (
+                  <button
+                    onClick={() => {
+                      setMobileSearchBarOpen(true);
+                      // Focus input after it renders
+                      setTimeout(() => {
+                        const input = document.querySelector('.mobile-wallet-search-input') as HTMLInputElement;
+                        input?.focus();
+                      }, 0);
+                    }}
+                    className="w-full flex items-center gap-2 px-4 py-2 bg-slate-800/50 border border-slate-600 rounded-lg text-slate-400 hover:text-amber-400 hover:border-amber-500/50 transition-colors mb-4"
+                    aria-label="Open wallet search"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <span className="text-sm">Search wallet address...</span>
+                  </button>
+                ) : (
+                  <form onSubmit={handleWalletSearch} className="w-full relative mb-4">
+                    <input
+                      type="text"
+                      value={walletSearch}
+                      onChange={(e) => {
+                        setWalletSearch(e.target.value);
+                        setSearchError(null);
+                      }}
+                      placeholder="Search wallet address..."
+                      className="mobile-wallet-search-input w-full bg-slate-800/50 border border-slate-600 rounded-lg px-4 py-2 pr-20 text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500/50 transition-all"
+                      autoFocus
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                      <button
+                        type="submit"
+                        className="p-1.5 text-slate-400 hover:text-amber-400 transition-colors"
+                        aria-label="Search wallet"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileSearchBarOpen(false);
+                          setWalletSearch('');
+                          setSearchError(null);
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-slate-200 transition-colors"
+                        aria-label="Close search"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    {searchError && (
+                      <div className="absolute top-full left-0 mt-1 bg-red-500/20 border border-red-500/50 rounded px-2 py-1 text-xs text-red-400 whitespace-nowrap z-50">
+                        {searchError}
+                      </div>
+                    )}
+                  </form>
+                )}
               </div>
 
               {/* Wallet Section - Always show, with scaffolding when not connected */}
@@ -739,6 +900,18 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
               {/* Menu Items */}
               <nav className="flex-1 overflow-y-auto p-4 space-y-2">
                 <Link
+                  to="/"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center gap-3 ${
+                    activeView === 'mines'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <img src="/orelogo.jpg" alt="ORE" className="w-5 h-5 object-contain rounded" />
+                  Mines
+                </Link>
+                <Link
                   to="/about"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center gap-3 ${
@@ -784,7 +957,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
                   <button
                     onClick={() => setMobileStatsDropdownOpen(!mobileStatsDropdownOpen)}
                     className={`w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center justify-between gap-3 ${
-                      ['treasury', 'inflation', 'token', 'revenue', 'strategies', 'staking', 'liquidity', 'unrefined', 'martingale'].includes(activeView)
+                      ['treasury', 'inflation', 'token', 'revenue', 'strategies', 'staking', 'liquidity', 'unrefined', 'martingale', 'miners'].includes(activeView)
                         ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
                         : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                     }`}
@@ -938,6 +1111,20 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
                     </div>
                   )}
                 </div>
+                <Link
+                  to="/dust-to-ore"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center gap-3 ${
+                    activeView === 'dust-to-ore'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                  Dust to ORE
+                </Link>
               </nav>
 
               {/* X/Twitter Link in Mobile Menu */}
@@ -959,6 +1146,98 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
           </div>
       </>
 
+      {/* Wallet Search Modal - Centered overlay */}
+      {searchBarOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/70 z-[60] backdrop-blur-sm"
+            onClick={() => {
+              setSearchBarOpen(false);
+              setWalletSearch('');
+              setSearchError(null);
+            }}
+          />
+          
+          {/* Modal */}
+          <div className="fixed inset-0 z-[70] flex items-start justify-center pt-[15vh] px-4 pointer-events-none">
+            <div 
+              className="bg-[#1a1a1a] border-2 border-slate-600 rounded-2xl shadow-2xl w-full max-w-2xl pointer-events-auto animate-fade-in"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <form onSubmit={handleWalletSearch} className="p-6">
+                <div className="relative">
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <svg className="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                  <input
+                    type="text"
+                    value={walletSearch}
+                    onChange={(e) => {
+                      setWalletSearch(e.target.value);
+                      setSearchError(null);
+                    }}
+                    placeholder="Search wallet address or profile..."
+                    className="wallet-search-modal-input w-full bg-slate-800/50 border-2 border-slate-600 rounded-xl px-14 py-4 text-lg text-slate-200 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500/50 transition-all"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchBarOpen(false);
+                      setWalletSearch('');
+                      setSearchError(null);
+                    }}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded-lg transition-colors"
+                    aria-label="Close search"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                
+                {searchError && (
+                  <div className="mt-3 bg-red-500/20 border border-red-500/50 rounded-lg px-4 py-2 text-sm text-red-400">
+                    {searchError}
+                  </div>
+                )}
+                
+                {/* Search Hints */}
+                <div className="mt-6 pt-6 border-t border-slate-700">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">Search for:</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="flex items-start gap-3 p-3 bg-slate-800/30 rounded-lg border border-slate-700">
+                      <svg className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm font-medium text-slate-200">Wallet Address</p>
+                        <p className="text-xs text-slate-400 mt-0.5">View profile by Solana wallet address</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3 p-3 bg-slate-800/30 rounded-lg border border-slate-700">
+                      <svg className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm font-medium text-slate-200">Miner Profile</p>
+                        <p className="text-xs text-slate-400 mt-0.5">See mining stats and leaderboard rank</p>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-4 text-center">
+                    Press <kbd className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-slate-300">Enter</kbd> to search or <kbd className="px-2 py-1 bg-slate-800 border border-slate-600 rounded text-slate-300">Esc</kbd> to close
+                  </p>
+                </div>
+              </form>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Wallet Menu - Works on both desktop and mobile */}
       {walletMenuOpen && (
         <WalletMenu 
@@ -977,4 +1256,3 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
     </header>
   );
 }
-

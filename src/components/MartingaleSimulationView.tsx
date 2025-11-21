@@ -758,7 +758,9 @@ export function MartingaleSimulationView() {
               }
               countdown={countdown}
               uniqueMiners={parseInt(realState.round.uniqueMiners || '0')}
-              totalBids={realBids.bids.reduce((sum, bid) => sum + bid.count, 0)}
+              totalBids={realBids?.bids && Array.isArray(realBids.bids) 
+                ? realBids.bids.reduce((sum, bid) => sum + (bid.count || 0), 0) 
+                : 0}
               roundId={realState.round.roundId}
               state={realState}
               bids={realBids}

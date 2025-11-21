@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, memo } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
-import { getMinerStats, getWalletBalance, getLeaderboard, getMinerHistory, getTokenCurrent, getProfileData, getWalletBalances, getOreLeaders } from '../services/api';
+import { useSearchParams } from 'react-router-dom';
+import { getMinerStats, getWalletBalance, getLeaderboard, getMinerHistory, getTokenCurrent, getProfileData, getWalletBalances, getOreLeaders, getTopOreHolders } from '../services/api';
 import { SolanaLogo } from './SolanaLogo';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { PublicKey } from '@solana/web3.js';
 
 const LAMPORTS_PER_SOL = 1e9;
 const ORE_CONVERSION_FACTOR = 1e11;
@@ -71,9 +73,11 @@ interface HistoryDataPoint {
 export function MyProfileView() {
   const { publicKey, connected, connecting } = useWallet();
   const { setVisible } = useWalletModal();
+  const [searchParams] = useSearchParams();
   const [minerStats, setMinerStats] = useState<MinerStats | null>(null);
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry | null>(null);
   const [oreLeaderboard, setOreLeaderboard] = useState<Array<{ authority: string; rewards_ore: number }>>([]);
+  const [topHolders, setTopHolders] = useState<Array<{ address: string; balance: number; owner: string }>>([]);
   const [historyData, setHistoryData] = useState<HistoryDataPoint[]>([]);
   const [, setWalletBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -87,11 +91,18 @@ export function MyProfileView() {
   const [minerStatsLoading, setMinerStatsLoading] = useState(false);
   const [leaderboardDataLoading, setLeaderboardDataLoading] = useState(false);
   const [oreLeaderboardLoading, setOreLeaderboardLoading] = useState(false);
+  const [topHoldersLoading, setTopHoldersLoading] = useState(false);
   const [pricesLoading, setPricesLoading] = useState(true);
+  const [searchedWallet, setSearchedWallet] = useState<string | null>(null);
 
   // Helper to check if leaderboard rank is loading
   const isLeaderboardRankLoading = () => {
     return oreLeaderboardLoading || (loading && oreLeaderboard.length === 0);
+  };
+
+  // Helper to check if top holders rank is loading
+  const isTopHoldersRankLoading = () => {
+    return topHoldersLoading || (loading && topHolders.length === 0);
   };
 
   const formatOre = (ore: number) => {
@@ -103,6 +114,21 @@ export function MyProfileView() {
     return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
+  // Get wallet address from URL params or connected wallet
+  const getWalletAddress = () => {
+    const walletParam = searchParams.get('wallet');
+    if (walletParam) {
+      try {
+        // Validate wallet address
+        const pubkey = new PublicKey(walletParam);
+        return pubkey.toBase58();
+      } catch {
+        return null;
+      }
+    }
+    return connected && publicKey ? publicKey.toBase58() : null;
+  };
+
   // Helper function to perform wallet search (progressive loading - fast display)
   const performWalletSearch = useCallback(async (address: string) => {
     setLoading(true);
@@ -110,6 +136,7 @@ export function MyProfileView() {
     setMinerStats(null);
     setLeaderboardData(null);
     setOreLeaderboard([]);
+    setTopHolders([]);
     setHistoryData([]);
     setWalletBalance(null);
     setProfileData(null);
@@ -119,6 +146,7 @@ export function MyProfileView() {
     setMinerStatsLoading(false);
     setLeaderboardDataLoading(false);
     setOreLeaderboardLoading(false);
+    setTopHoldersLoading(false);
 
     const trimmedAddress = address.trim();
     let hasReceivedData = false;
@@ -205,7 +233,7 @@ export function MyProfileView() {
         setHistoryData([]);
       });
 
-    // Fetch ORE leaderboard (for rank)
+    // Fetch ORE leaderboard (for Top Miners rank - by unrefined ORE)
     setOreLeaderboardLoading(true);
     getOreLeaders()
       .then((oreLeaders) => {
@@ -216,6 +244,18 @@ export function MyProfileView() {
       .catch((err) => {
         console.error('Failed to fetch ORE leaderboard data:', err);
         setOreLeaderboardLoading(false);
+      });
+
+    // Fetch Top Holders (for Top Holders rank - by total ORE held)
+    setTopHoldersLoading(true);
+    getTopOreHolders(20)
+      .then((holders) => {
+        setTopHolders(holders);
+        setTopHoldersLoading(false);
+      })
+      .catch((err) => {
+        console.error('Failed to fetch top holders data:', err);
+        setTopHoldersLoading(false);
       });
 
     // Fallback timeout - ensures loading stops even if all APIs fail
@@ -263,28 +303,38 @@ export function MyProfileView() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-load profile when wallet is connected
+  // Auto-load profile when wallet is connected or URL param changes
   useEffect(() => {
-    if (!connected || !publicKey) {
-      // Clear data when wallet disconnects
-          setMinerStats(null);
-          setLeaderboardData(null);
-          setOreLeaderboard([]);
-          setHistoryData([]);
-          setWalletBalance(null);
-          setProfileData(null);
-          setWalletBalances(null);
-          setError(null);
-          setProfileDataLoading(false);
-          setMinerStatsLoading(false);
-          setLeaderboardDataLoading(false);
-          setOreLeaderboardLoading(false);
-          return;
+    const walletAddr = getWalletAddress();
+    if (walletAddr) {
+      setSearchedWallet(walletAddr);
+      
+      // Clear previous data
+      setProfileData(null);
+      setMinerStats(null);
+      setWalletBalances(null);
+      setProfileDataLoading(false);
+      setMinerStatsLoading(false);
+      
+      // Load profile for wallet
+      void performWalletSearch(walletAddr);
+    } else {
+      setSearchedWallet(null);
+      // Clear data when no wallet
+      setMinerStats(null);
+      setLeaderboardData(null);
+      setOreLeaderboard([]);
+      setHistoryData([]);
+      setWalletBalance(null);
+      setProfileData(null);
+      setWalletBalances(null);
+      setError(null);
+      setProfileDataLoading(false);
+      setMinerStatsLoading(false);
+      setLeaderboardDataLoading(false);
+      setOreLeaderboardLoading(false);
     }
-
-    const address = publicKey.toBase58();
-    void performWalletSearch(address);
-  }, [connected, publicKey, performWalletSearch]);
+  }, [connected, publicKey, searchParams, performWalletSearch]);
 
   const formatTimeLabel = (timestamp: number) => {
     if (!timestamp || timestamp === 0) return '';
@@ -479,8 +529,9 @@ export function MyProfileView() {
   
   console.log('ORE Value USD:', oreValueUsd, 'from totalOre:', totalOre, 'orePrice:', orePrice);
 
-  // Show connect wallet message if not connected
-  if (!connected || !publicKey) {
+  // Show connect wallet message if not connected and no wallet in URL
+  const walletAddress = getWalletAddress();
+  if (!walletAddress) {
     return (
       <div className="min-h-screen bg-black py-8 px-4">
         <div className="max-w-6xl mx-auto">
@@ -512,8 +563,12 @@ export function MyProfileView() {
     <div className="min-h-screen bg-black py-8 px-4">
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
-          <h1 className="text-4xl font-bold text-slate-100 mb-2">My Profile</h1>
-          <p className="text-slate-400 text-lg">View your mining statistics and performance</p>
+          <h1 className="text-4xl font-bold text-slate-100 mb-2">
+            {searchedWallet && searchedWallet !== publicKey?.toBase58() 
+              ? `Profile: ${searchedWallet.slice(0, 4)}...${searchedWallet.slice(-4)}`
+              : 'My Profile'}
+          </h1>
+          <p className="text-slate-400 text-lg">View mining statistics and performance</p>
         </div>
 
         {/* Error Message */}
@@ -558,81 +613,110 @@ export function MyProfileView() {
                 </a>
                 )}
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                 {/* Unrefined ORE */}
-                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4 overflow-hidden">
                   <p className="text-sm font-semibold text-slate-200 mb-2">Unrefined ORE</p>
                   {loading && !walletBalances ? (
                     <div className="flex items-center gap-2">
                       <div className="animate-pulse bg-slate-700 h-8 w-24 rounded"></div>
             </div>
                   ) : (
-                    <p className="text-2xl font-bold text-white flex items-center gap-2">
-                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
-                      {formatOre(unrefinedOre * ORE_CONVERSION_FACTOR)}
-                    </p>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded flex-shrink-0" />
+                      <p className="text-xl md:text-2xl font-bold text-white break-words overflow-wrap-anywhere truncate">
+                        {formatOre(unrefinedOre * ORE_CONVERSION_FACTOR)}
+                      </p>
+                    </div>
                   )}
                 </div>
 
                 {/* Refined ORE */}
-                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4 overflow-hidden">
                   <p className="text-sm font-semibold text-slate-200 mb-2">Refined ORE</p>
                   {loading && !walletBalances ? (
                     <div className="flex items-center gap-2">
                       <div className="animate-pulse bg-slate-700 h-8 w-24 rounded"></div>
                   </div>
                   ) : (
-                    <p className="text-2xl font-bold text-white flex items-center gap-2">
-                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
-                      {formatOre(refinedOre * ORE_CONVERSION_FACTOR)}
-                    </p>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded flex-shrink-0" />
+                      <p className="text-xl md:text-2xl font-bold text-white break-words overflow-wrap-anywhere truncate">
+                        {formatOre(refinedOre * ORE_CONVERSION_FACTOR)}
+                      </p>
+                    </div>
                   )}
             </div>
 
                 {/* Staked ORE */}
-                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4 overflow-hidden">
                   <p className="text-sm font-semibold text-slate-200 mb-2">Staked ORE</p>
                   {loading && !walletBalances ? (
                     <div className="flex items-center gap-2">
                       <div className="animate-pulse bg-slate-700 h-8 w-24 rounded"></div>
               </div>
                   ) : (
-                    <p className="text-2xl font-bold text-white flex items-center gap-2">
-                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
-                      {formatOre(stakedOre * ORE_CONVERSION_FACTOR)}
-                    </p>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded flex-shrink-0" />
+                      <p className="text-xl md:text-2xl font-bold text-white break-words overflow-wrap-anywhere truncate">
+                        {formatOre(stakedOre * ORE_CONVERSION_FACTOR)}
+                      </p>
+                    </div>
                   )}
                 </div>
 
                 {/* Total ORE */}
-                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4 overflow-hidden">
                   <p className="text-sm font-semibold text-slate-200 mb-2">Total ORE</p>
                   {loading && !walletBalances ? (
                   <div className="flex items-center gap-2">
                       <div className="animate-pulse bg-slate-700 h-8 w-24 rounded"></div>
                   </div>
                   ) : (
-                    <p className="text-2xl font-bold text-white flex items-center gap-2">
-                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded" />
-                      {formatOre(totalOre * ORE_CONVERSION_FACTOR)}
-                    </p>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img src="/orelogo.jpg" alt="ORE" className="w-6 h-6 object-contain rounded flex-shrink-0" />
+                      <p className="text-xl md:text-2xl font-bold text-white break-words overflow-wrap-anywhere truncate">
+                        {formatOre(totalOre * ORE_CONVERSION_FACTOR)}
+                      </p>
+                    </div>
                   )}
                 </div>
 
-                {/* Leaderboard Rank */}
-                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4">
-                  <p className="text-sm font-semibold text-slate-200 mb-2 flex items-center gap-2">
-                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-                    </svg>
-                    Leaderboard Rank
+                {/* Top Miners Rank */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4 overflow-hidden">
+                  <p className="text-sm font-semibold text-slate-200 mb-1 flex items-center gap-2">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded flex-shrink-0" />
+                    <span className="truncate">Top Miners</span>
                   </p>
+                  <p className="text-xs text-slate-400 mb-2 truncate">Ranked by unrefined ORE</p>
                   {isLeaderboardRankLoading() ? (
                     <LoadingIndicator />
-                  ) : oreLeaderboard.length > 0 && minerStats ? (
-                    <p className="text-2xl font-bold text-white">
+                  ) : oreLeaderboard.length > 0 && (minerStats || walletAddress) ? (
+                    <p className="text-2xl font-bold text-white truncate">
                       #{(() => {
-                        const index = oreLeaderboard.findIndex(entry => entry.authority === minerStats.authority);
+                        const searchAddr = walletAddress || (minerStats ? minerStats.authority : '');
+                        const index = oreLeaderboard.findIndex(entry => entry.authority === searchAddr);
+                        return index >= 0 ? index + 1 : 'N/A';
+                      })()}
+                    </p>
+                  ) : (
+                    <p className="text-2xl font-bold text-slate-500">—</p>
+                  )}
+                </div>
+
+                {/* Top Holders Rank */}
+                <div className="bg-slate-800/50 border border-slate-600 rounded-lg p-4 overflow-hidden">
+                  <p className="text-sm font-semibold text-slate-200 mb-1 flex items-center gap-2">
+                    <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded flex-shrink-0" />
+                    <span className="truncate">Top Holders</span>
+                  </p>
+                  <p className="text-xs text-slate-400 mb-2 truncate">Ranked by total ORE held</p>
+                  {isTopHoldersRankLoading() ? (
+                    <LoadingIndicator />
+                  ) : topHolders.length > 0 && walletAddress ? (
+                    <p className="text-2xl font-bold text-white truncate">
+                      #{(() => {
+                        const index = topHolders.findIndex(holder => holder.owner === walletAddress);
                         return index >= 0 ? index + 1 : 'N/A';
                       })()}
                     </p>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
-import { getState, getBids } from './services/api';
+import { getState, getBids, getMinerStats } from './services/api';
+import { useWallet } from '@solana/wallet-adapter-react';
 import type { StateResponse, BidsResponse } from './types/api';
 import { Header } from './components/Header';
 import { GridVisualization } from './components/GridVisualization';
@@ -11,98 +12,318 @@ import { MyProfileView } from './components/MyProfileView';
 import { MartingaleSimulationView } from './components/MartingaleSimulationView';
 import { WhatIsOreView } from './components/WhatIsOreView';
 import { AboutView } from './components/AboutView';
+import { MinersView } from './components/MinersView';
+import { DustToOreView } from './components/DustToOreView';
 
-const POLL_INTERVAL = 5000; // 5 seconds for main data
-const GRID_POLL_INTERVAL = 1000; // 1 second for grid updates
+const LAMPORTS_PER_SOL = 1e9;
+const ORE_CONVERSION_FACTOR = 1e11;
 
-type View = 'dashboard' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore';
+// Polling intervals - respecting API rate limits: 5/sec, 180/min
+// Stagger requests to avoid hitting 5/sec limit
+const POLL_INTERVAL = 3000; // 3 seconds for state (20 requests/min - well under 180/min limit)
+const BIDS_POLL_INTERVAL = 12000; // 12 seconds for bids (5 requests/min - minimal load)
+const BIDS_OFFSET = 1500; // 1.5s offset from state polling to avoid hitting 5/sec limit
+
+type View = 'dashboard' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore' | 'miners' | 'dust-to-ore';
 
 // Main content component that uses routing
 function AppContent() {
   const location = useLocation();
+  const { publicKey, connected } = useWallet();
   const [state, setState] = useState<StateResponse | null>(null);
   const [bids, setBids] = useState<BidsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
+  
+  // User bet tracking - only show confirmed on-chain deployments
+  const [userBets, setUserBets] = useState<number[]>(Array(25).fill(0)); // SOL amount per square (0-24 index)
+  const [lastRoundChecked, setLastRoundChecked] = useState<string | null>(null); // Track last round we checked
+  const [previousStats, setPreviousStats] = useState<{
+    roundId: string;
+    totalSolEarned: number;
+    totalOreEarned: number;
+  } | null>(null);
+  const [roundResults, setRoundResults] = useState<{
+    roundId: string;
+    solWon: number;
+    oreWon: number;
+  } | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchState = useCallback(async () => {
     try {
+      const stateData = await getState();
+      
+      // Only update if we got valid data
+      if (stateData) {
+        setState(stateData);
+      }
+      
+      // Clear error only after successful fetch
       setError(null);
-      const [stateData, bidsData] = await Promise.all([
-        getState(),
-        getBids(),
-      ]);
-      setState(stateData);
-      setBids(bidsData);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch data';
-      setError(errorMessage);
-      console.error('Error fetching data:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch state';
+      // Only show error if we don't have existing data (initial load)
+      // If we have existing data, silently keep showing it instead of flashing error
+      if (!state) {
+        setError(errorMessage);
+      }
+      // Silently log error but don't disrupt UI if we have existing data
+      console.error('Error fetching state:', err);
+      // Don't clear existing state on error - keep showing last known good data
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [state]);
 
-  const fetchGridData = useCallback(async () => {
+  const fetchBids = useCallback(async () => {
     try {
-      const stateData = await getState();
-      setState(stateData);
+      const bidsData = await getBids();
+      
+      // Only update if we got valid data and bids is an array
+      if (bidsData && Array.isArray(bidsData.bids)) {
+        setBids(bidsData);
+      }
     } catch (err) {
-      // Silently fail for grid updates to avoid disrupting the UI
-      console.error('Error fetching grid data:', err);
+      // Silently fail for bids - not critical, keep showing last known data
+      console.error('Error fetching bids:', err);
+      // Don't clear existing bids on error - keep showing last known good data
+      // Only clear if we don't have existing data (first load)
+      if (!bids) {
+        // Set empty bids structure to prevent errors
+        setBids({ roundId: '', collectedAt: '', uniqueMiners: 0, bids: [] });
+      }
     }
   }, []);
 
   useEffect(() => {
-    // Initial fetch
-    fetchData();
+    // Initial fetch for state
+    fetchState();
+    
+    // Stagger bids fetch to avoid hitting 5/sec limit
+    const initialBidsTimeout = setTimeout(fetchBids, BIDS_OFFSET);
 
-    // Set up polling for main data
-    const interval = setInterval(fetchData, POLL_INTERVAL);
+    // Set up polling for state at 3s (main data - 20 requests/min)
+    const stateInterval = setInterval(fetchState, POLL_INTERVAL);
 
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    // Set up slower polling for bids at 12s with offset (less critical - 5 requests/min)
+    const bidsInterval = setInterval(() => {
+      // Small delay to avoid hitting 5/sec limit when state also polls
+      setTimeout(fetchBids, BIDS_OFFSET);
+    }, BIDS_POLL_INTERVAL);
 
-  useEffect(() => {
-    // Set up more frequent polling for grid visualization
-    if (state?.round) {
-      const gridInterval = setInterval(fetchGridData, GRID_POLL_INTERVAL);
-      return () => clearInterval(gridInterval);
+    return () => {
+      clearTimeout(initialBidsTimeout);
+      clearInterval(stateInterval);
+      clearInterval(bidsInterval);
+    };
+  }, [fetchState, fetchBids]);
+
+  // Fetch user bets when wallet is connected - only show confirmed on-chain deployments
+  const fetchUserBets = useCallback(async () => {
+    if (!connected || !publicKey || !state?.round) {
+      setUserBets(Array(25).fill(0));
+      setLastRoundChecked(null);
+      return;
     }
-  }, [state?.round, fetchGridData]);
+    
+    try {
+      const address = publicKey.toBase58();
+      const minerStats = await getMinerStats(address);
+      
+      // Only show bets if they're from the current round and have meaningful amounts
+      const currentRoundId = state.round.roundId;
+      const minerRoundId = minerStats.round_id?.toString();
+      
+      // If round changed, clear bets first
+      if (lastRoundChecked && lastRoundChecked !== currentRoundId) {
+        setUserBets(Array(25).fill(0));
+      }
+      
+      // Check if miner stats are for the current round
+      if (minerRoundId !== currentRoundId) {
+        // Not current round - clear bets and don't update
+        if (lastRoundChecked === currentRoundId) {
+          // Already checked this round and it's still not matching, clear
+          setUserBets(Array(25).fill(0));
+        }
+        return;
+      }
+      
+      // Only proceed if we're on the current round
+      setLastRoundChecked(currentRoundId);
+      
+      // deployed is an array of 25 numbers (lamports) representing SOL deployed per square
+      if (minerStats.deployed && Array.isArray(minerStats.deployed)) {
+        const MIN_BET_THRESHOLD = 0.0001; // Only show bets above 0.0001 SOL to avoid noise
+        
+        const bets = minerStats.deployed.map(lamports => {
+          const sol = lamports / LAMPORTS_PER_SOL;
+          // Only return non-zero if above threshold
+          return sol >= MIN_BET_THRESHOLD ? sol : 0;
+        });
+        
+        // Only update if there are actual bets (not all zeros)
+        const hasBets = bets.some(bet => bet > 0);
+        if (hasBets) {
+          // Only update state if bets actually changed to prevent flashing
+          setUserBets(prevBets => {
+            const changed = prevBets.some((prev, idx) => Math.abs(prev - bets[idx]) > 0.00001);
+            return changed ? bets : prevBets;
+          });
+        } else {
+          setUserBets(Array(25).fill(0));
+        }
+        
+        // Track round changes and calculate winnings
+        const currentSolEarned = minerStats.lifetime_rewards_sol / LAMPORTS_PER_SOL;
+        const currentOreEarned = minerStats.lifetime_rewards_ore / ORE_CONVERSION_FACTOR;
+        
+        // Check if round changed
+        if (previousStats && previousStats.roundId !== currentRoundId && state.roundResult?.resultAvailable) {
+          // Round finished - calculate winnings
+          const solWon = currentSolEarned - previousStats.totalSolEarned;
+          const oreWon = currentOreEarned - previousStats.totalOreEarned;
+          
+          if (solWon > 0 || oreWon > 0) {
+            setRoundResults({
+              roundId: previousStats.roundId,
+              solWon: Math.max(0, solWon), // Ensure non-negative
+              oreWon: Math.max(0, oreWon), // Ensure non-negative
+            });
+            
+            // Clear results after 10 seconds
+            setTimeout(() => setRoundResults(null), 10000);
+          }
+        }
+        
+        // Update previous stats for next round
+        setPreviousStats({
+          roundId: currentRoundId,
+          totalSolEarned: currentSolEarned,
+          totalOreEarned: currentOreEarned,
+        });
+      } else {
+        setUserBets(Array(25).fill(0));
+      }
+    } catch (err) {
+      // Silently fail - user might not have any bets
+      console.debug('Could not fetch user bets:', err);
+      setUserBets(Array(25).fill(0));
+    }
+  }, [connected, publicKey, state?.round, state?.roundResult, previousStats, lastRoundChecked]);
+
+
+  // Poll user bets every 10 seconds when connected (less frequent to avoid flashing)
+  // Only fetch when round ID changes or on initial connection
+  useEffect(() => {
+    if (connected && publicKey && state?.round) {
+      // Fetch immediately on round change or initial load
+      fetchUserBets();
+      const interval = setInterval(fetchUserBets, 10000); // Poll every 10 seconds
+      return () => clearInterval(interval);
+    } else {
+      setUserBets(Array(25).fill(0));
+      setPreviousStats(null);
+      setRoundResults(null);
+      setLastRoundChecked(null);
+    }
+  }, [connected, publicKey, state?.round?.roundId, fetchUserBets]);
 
   const handleRetry = () => {
     setLoading(true);
-    fetchData();
+    fetchState();
+    fetchBids();
   };
 
-  // Calculate countdown
+  // Linear countdown based on actual time
+  const [countdown, setCountdown] = useState<string>('Not Started');
+  const [countdownEndTime, setCountdownEndTime] = useState<number | null>(null);
+  
   const currentSlot = state?.currentSlot ? parseInt(state.currentSlot) : 0;
   const endSlot = state?.round?.mining.endSlot ? parseInt(state.round.mining.endSlot) : 0;
-  const remainingSlots = Math.max(0, endSlot - currentSlot);
   const status = state?.round?.mining.status || 'idle';
+  const roundId = state?.round?.roundId;
   
-  const formatCountdown = () => {
+  // Update end time when round changes or when we get new slot data
+  useEffect(() => {
     if (status === 'expired' || status === 'finished') {
-      return '0s left';
+      setCountdown('0s left');
+      setCountdownEndTime(null);
+      return;
     }
+    
     if (status === 'idle') {
-      return 'Not Started';
+      setCountdown('Not Started');
+      setCountdownEndTime(null);
+      return;
     }
-    // Rough estimate: 1 slot ≈ 0.4 seconds
-    const secondsRemaining = remainingSlots * 0.4;
-    const minutes = Math.floor(secondsRemaining / 60);
-    const seconds = Math.floor(secondsRemaining % 60);
-    if (minutes > 0) {
-      return `${minutes}m ${seconds}s`;
+    
+    if (status === 'active' && endSlot > 0 && currentSlot > 0) {
+      // Calculate end time based on slots remaining
+      // Rough estimate: 1 slot ≈ 0.4 seconds
+      const remainingSlots = Math.max(0, endSlot - currentSlot);
+      const secondsRemaining = remainingSlots * 0.4;
+      const now = Date.now();
+      const endTime = now + (secondsRemaining * 1000);
+      
+      // Only update end time if round changed or we don't have one set
+      setCountdownEndTime(prev => {
+        // If round changed, reset the end time
+        const storedRoundId = sessionStorage.getItem('countdownRoundId');
+        if (storedRoundId !== roundId) {
+          sessionStorage.setItem('countdownRoundId', roundId || '');
+          return endTime;
+        }
+        // If we don't have an end time or it's significantly different (more than 5 seconds), update it
+        if (prev === null || Math.abs(prev - endTime) > 5000) {
+          return endTime;
+        }
+        // Otherwise keep the existing end time for linear countdown
+        return prev;
+      });
     }
-    return `${seconds}s`;
-  };
-
-  const countdown = formatCountdown();
+  }, [status, endSlot, currentSlot, roundId]);
+  
+  // Linear countdown timer - updates every 100ms for smooth display
+  useEffect(() => {
+    if (!countdownEndTime || status !== 'active') {
+      return;
+    }
+    
+    const updateCountdown = () => {
+      const now = Date.now();
+      const remaining = Math.max(0, countdownEndTime - now);
+      const secondsRemaining = Math.ceil(remaining / 1000);
+      
+      if (secondsRemaining <= 0) {
+        setCountdown('0s left');
+        setCountdownEndTime(null);
+        return;
+      }
+      
+      const minutes = Math.floor(secondsRemaining / 60);
+      const seconds = secondsRemaining % 60;
+      
+      if (minutes > 0) {
+        setCountdown(`${minutes}m ${seconds}s`);
+      } else {
+        setCountdown(`${seconds}s`);
+      }
+    };
+    
+    // Update immediately
+    updateCountdown();
+    
+    // Update every 100ms for smooth countdown
+    const interval = setInterval(updateCountdown, 100);
+    
+    return () => clearInterval(interval);
+  }, [countdownEndTime, status]);
   const uniqueMiners = state?.round?.uniqueMiners ? parseInt(state.round.uniqueMiners) : undefined;
-  const totalBids = bids?.bids.reduce((sum, bid) => sum + bid.count, 0);
+  const totalBids = bids?.bids && Array.isArray(bids.bids) 
+    ? bids.bids.reduce((sum, bid) => sum + (bid.count || 0), 0) 
+    : 0;
 
   // Determine current view from location
   const getCurrentView = (): View => {
@@ -119,6 +340,7 @@ function AppContent() {
     if (path === '/staking') return 'staking';
     if (path === '/liquidity') return 'liquidity';
     if (path === '/unrefined') return 'unrefined';
+    if (path === '/miners') return 'miners';
     return 'dashboard';
   };
 
@@ -154,7 +376,7 @@ function AppContent() {
         walletMenuOpen={walletMenuOpen}
         setWalletMenuOpen={setWalletMenuOpen}
       />
-      <main className={`bg-black transition-all duration-700 ease-in-out ${walletMenuOpen ? 'blur-sm' : ''}`}>
+      <main className={`bg-black transition-all duration-700 ease-in-out ${walletMenuOpen ? 'opacity-70' : ''}`}>
         <Routes>
           <Route path="/about" element={<AboutView />} />
           <Route path="/treasury" element={<TreasuryView currentView="treasury" />} />
@@ -164,11 +386,13 @@ function AppContent() {
           <Route path="/staking" element={<TreasuryView currentView="staking" />} />
           <Route path="/liquidity" element={<TreasuryView currentView="liquidity" />} />
           <Route path="/unrefined" element={<TreasuryView currentView="unrefined" />} />
+          <Route path="/miners" element={<MinersView />} />
           <Route path="/leaderboard" element={<LeaderboardView />} />
           <Route path="/strategies" element={<StrategiesSoVView />} />
           <Route path="/my-profile" element={<MyProfileView />} />
           <Route path="/martingale" element={<MartingaleSimulationView />} />
           <Route path="/what-is-ore" element={<WhatIsOreView />} />
+          <Route path="/dust-to-ore" element={<DustToOreView />} />
           <Route path="/" element={
             <div className="py-8 px-4">
               <div className="max-w-7xl mx-auto">
@@ -206,6 +430,8 @@ function AppContent() {
                   bids={bids}
                   roundResult={state?.roundResult || null}
                   roundStatus={status}
+                  userBets={connected && publicKey ? userBets : null}
+                  roundResults={roundResults}
                 />
 
                 {/* Loading Indicator */}
