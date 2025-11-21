@@ -1,26 +1,39 @@
-import { Connection, PublicKey } from '@solana/web3.js';
+import { Connection } from '@solana/web3.js';
 
-// Hard-code ORE board PDA if desired, or use API as a source of truth.
-// For now we keep this minimal and lean on the public ORE v2 API.
+// Minimal ORE round state snapshot, used by the bot to know which round is active.
 
 export interface OreStateSnapshot {
   roundId: number;
   status: 'idle' | 'active' | 'finished' | 'expired';
 }
 
-export async function getCurrentRound(connection: Connection): Promise<OreStateSnapshot> {
-  // Minimal implementation using ore-api.gmore.fun v2 endpoint
+export async function getCurrentRound(_connection: Connection): Promise<OreStateSnapshot> {
+  // Use the same v2 state endpoint and structure as the frontend getState() helper.
   const res = await fetch('https://ore-api.gmore.fun/v2/state');
   if (!res.ok) {
     throw new Error(`Failed to fetch ORE state: ${res.status} ${res.statusText}`);
   }
   const data = await res.json();
-  const round = data.round || data.frames?.[0]?.liveData;
-  if (!round) {
-    throw new Error('No round data in ORE state response');
+
+  // v2 format: { frames: [{ roundId, liveData: {...}, ... }], globals: {...}, currentRoundId, ... }
+  const frames: any[] = Array.isArray(data.frames) ? data.frames : [];
+
+  if (!frames.length) {
+    throw new Error('No round frames in ORE state response');
   }
-  const roundId = parseInt(round.roundId ?? data.currentRoundId ?? '0', 10);
-  const status = (round.mining?.status ?? 'idle') as OreStateSnapshot['status'];
+
+  const currentFrame =
+    frames.find((f) => String(f.roundId) === String(data.currentRoundId)) || frames[0];
+  const liveData = currentFrame?.liveData || currentFrame?.round || currentFrame;
+
+  if (!liveData) {
+    throw new Error('No liveData in current ORE frame');
+  }
+
+  const roundId = parseInt(liveData.roundId ?? currentFrame.roundId ?? data.currentRoundId ?? '0', 10);
+  const mining = liveData.mining || {};
+  const status = (mining.status || 'idle') as OreStateSnapshot['status'];
+
   return { roundId, status };
 }
 
