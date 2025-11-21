@@ -4,8 +4,14 @@ import cors from 'cors';
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { AutoMineBot } from './bot.js';
-import { getOrCreateBurner, findBurner, createSession, getSession, updateSessionStatus } from './state.js';
-import type { BotContext } from './types.js';
+import {
+  getOrCreateBurner,
+  findBurner,
+  createSession,
+  getSession,
+  updateSessionStatus,
+} from './state.js';
+import type { BotContext, SessionConfig } from './types.js';
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
@@ -26,6 +32,22 @@ async function main() {
 
   const bot = new AutoMineBot(ctx);
   bot.start();
+
+  const toApiSession = (session: SessionConfig | undefined) => {
+    if (!session) return null;
+    return {
+      ...session,
+      solPerBlockLamports: Number(session.solPerBlockLamports),
+      remainingSolLamports:
+        session.remainingSolLamports !== undefined
+          ? Number(session.remainingSolLamports)
+          : undefined,
+      totalDeployedLamports:
+        session.totalDeployedLamports !== undefined
+          ? Number(session.totalDeployedLamports)
+          : undefined,
+    };
+  };
 
   // POST /automine/burner { mainWallet }
   app.post('/automine/burner', (req, res) => {
@@ -81,7 +103,7 @@ async function main() {
       initialDepositLamports,
     });
 
-    res.json(session);
+    res.json(toApiSession(session));
   });
 
   // POST /automine/sessions/:id/start
@@ -92,7 +114,7 @@ async function main() {
       return res.status(404).json({ error: 'Session not found' });
     }
     const updated = updateSessionStatus(sessionId, 'running');
-    res.json(updated);
+    res.json(toApiSession(updated));
   });
 
   // POST /automine/sessions/:id/stop
@@ -103,7 +125,7 @@ async function main() {
       return res.status(404).json({ error: 'Session not found' });
     }
     const updated = updateSessionStatus(sessionId, 'stopped');
-    res.json(updated);
+    res.json(toApiSession(updated));
   });
 
   // GET /automine/sessions/:id
@@ -113,7 +135,7 @@ async function main() {
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
-    res.json(session);
+    res.json(toApiSession(session));
   });
 
   app.get('/health', async (_req, res) => {
