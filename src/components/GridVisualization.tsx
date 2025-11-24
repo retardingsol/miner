@@ -181,6 +181,7 @@ interface GridVisualizationProps {
     solWon: number;
     oreWon: number;
   } | null; // Results from the last completed round
+  walletAddress?: string | null;
 }
 
 interface PriceCostDataPoint {
@@ -191,11 +192,57 @@ interface PriceCostDataPoint {
   date: Date;
 }
 
-export function GridVisualization({ perSquare, winningSquareIndex, countdown, uniqueMiners, totalBids, roundId, state, roundResult, roundStatus, selectedSquare, currentBet, martingaleStats, userBets, roundResults }: GridVisualizationProps) {
+export function GridVisualization({ perSquare, winningSquareIndex, countdown, uniqueMiners, totalBids, roundId, state, roundResult, roundStatus, selectedSquare, currentBet, martingaleStats, userBets, roundResults, walletAddress }: GridVisualizationProps) {
   const [barWidths, setBarWidths] = useState<number[]>(Array(25).fill(0));
   const [barColors, setBarColors] = useState<string[]>(Array(25).fill('bg-slate-500'));
   const [tooltipsEnabled, setTooltipsEnabled] = useState(true);
   const [historicalData, setHistoricalData] = useState<PriceCostDataPoint[]>([]);
+
+  const winningMiners = useMemo(() => {
+    const list: {
+      authority: string;
+      solWon: number;
+      oreWon: number;
+      isUser: boolean;
+    }[] = [];
+
+    if (roundResult?.winners && Array.isArray(roundResult.winners)) {
+      for (const w of roundResult.winners) {
+        const authority = w.authority || '';
+        if (!authority) continue;
+        const sol = parseFloat(w.solWon ?? '0') || 0;
+        const ore = parseFloat(w.oreWon ?? '0') || 0;
+        list.push({
+          authority,
+          solWon: sol,
+          oreWon: ore,
+          isUser: walletAddress ? authority === walletAddress : false,
+        });
+      }
+    }
+
+    if (walletAddress && roundResults && (roundResults.solWon > 0 || roundResults.oreWon > 0)) {
+      const existingIdx = list.findIndex((w) => w.authority === walletAddress);
+      if (existingIdx >= 0) {
+        list[existingIdx].solWon = roundResults.solWon;
+        list[existingIdx].oreWon = roundResults.oreWon;
+        list[existingIdx].isUser = true;
+      } else {
+        list.unshift({
+          authority: walletAddress,
+          solWon: roundResults.solWon,
+          oreWon: roundResults.oreWon,
+          isUser: true,
+        });
+      }
+    }
+
+    return list.sort((a, b) => {
+      if (a.isUser !== b.isUser) return a.isUser ? -1 : 1;
+      if (b.oreWon !== a.oreWon) return b.oreWon - a.oreWon;
+      return b.solWon - a.solWon;
+    });
+  }, [roundResult?.winners, walletAddress, roundResults]);
 
   useEffect(() => {
     if (!perSquare) return;
@@ -746,6 +793,71 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                     </div>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Winning miners list for the last finalized round */}
+          {winningMiners.length > 0 && (
+            <div className="mb-3 bg-[#111827] border border-slate-700 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-slate-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M13 7a3 3 0 11-6 0 3 3 0 016 0zM5 14a4 4 0 118 0H5z" />
+                  </svg>
+                  <p className="text-xs font-semibold text-slate-300 uppercase tracking-wide">
+                    Miners
+                  </p>
+                </div>
+                {roundResults && (
+                  <p className="text-[10px] text-slate-500">
+                    Round #{roundResults.roundId}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                {winningMiners.map((m) => {
+                  const short =
+                    m.authority.length > 8
+                      ? `${m.authority.slice(0, 4)}...${m.authority.slice(-4)}`
+                      : m.authority;
+                  return (
+                    <div
+                      key={m.authority}
+                      className={`flex items-center justify-between px-2 py-1 rounded-lg ${
+                        m.isUser ? 'bg-amber-500/10 border border-amber-400/40' : 'bg-slate-800/40'
+                      }`}
+                    >
+                      <div className="flex flex-col">
+                        <span
+                          className={`text-xs font-medium ${
+                            m.isUser ? 'text-amber-200' : 'text-slate-200'
+                          }`}
+                        >
+                          {m.isUser ? 'You' : short}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs">
+                        <div className="flex items-center gap-1">
+                          <SolanaLogo width={12} height={12} />
+                          <span className="text-slate-100 font-semibold">
+                            {m.solWon.toFixed(4)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <img
+                            src="/orelogo.jpg"
+                            alt="ORE"
+                            className="w-3 h-3 object-contain rounded"
+                          />
+                          <span className="text-amber-300 font-semibold">
+                            {m.oreWon.toFixed(6)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

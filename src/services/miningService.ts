@@ -17,6 +17,7 @@ import {
   automate,
   checkpoint,
   claimSol,
+  claimOre,
   automationPDA,
   minerPDA,
   roundPDA,
@@ -501,6 +502,46 @@ export async function claimRewards(
 }
 
 /**
+ * Claim ALL rewards: SOL + ORE (refined + unrefined).
+ * Sends a single transaction containing ClaimSOL and ClaimORE.
+ */
+export async function claimAllRewards(
+  connection: Connection,
+  signer: PublicKey,
+  signTransaction: (tx: Transaction) => Promise<Transaction>
+): Promise<string> {
+  try {
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+
+    const claimSolIx = claimSol(signer);
+    const claimOreIx = claimOre(signer);
+
+    const transaction = new Transaction();
+    transaction.add(claimSolIx);
+    transaction.add(claimOreIx);
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = signer;
+
+    const signed = await signTransaction(transaction);
+    const signature = await connection.sendRawTransaction(signed.serialize(), {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
+
+    await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      'confirmed',
+    );
+
+    console.log('✅ All rewards claimed (SOL + ORE):', signature);
+    return signature;
+  } catch (error) {
+    console.error('Error claiming all rewards:', error);
+    throw error;
+  }
+}
+
+/**
  * Get miner balance (SOL available to claim)
  */
 export async function getMinerBalance(
@@ -517,8 +558,11 @@ export async function getMinerBalance(
     
     const data = minerAccount.data;
     if (data.length < 536) {
-      console.warn('Miner account data too short to parse rewards_sol:', data.length);
-      return new BN(0);
+      // If layout is unexpected, log but do not clobber UI with zero;
+      // let callers decide whether to keep previous value.
+      throw new Error(
+        `Miner account data too short to parse rewards_sol: ${data.length}`,
+      );
     }
 
     let offset = 8; // skip discriminator
@@ -536,7 +580,7 @@ export async function getMinerBalance(
     return rewardsSol;
   } catch (error) {
     console.error('Error getting miner balance:', error);
-    return new BN(0);
+    throw error;
   }
 }
 
@@ -564,8 +608,9 @@ export async function getMinerOreRewards(
     const data = minerAccount.data;
     // Minimum expected size for Miner account based on IDL fields
     if (data.length < 536) {
-      console.warn('Miner account data too short to parse rewards:', data.length);
-      return null;
+      throw new Error(
+        `Miner account data too short to parse rewards: ${data.length}`,
+      );
     }
 
     let offset = 8; // skip 8-byte account discriminator
@@ -597,7 +642,7 @@ export async function getMinerOreRewards(
     return { rewardsOre, refinedOre, lifetimeRewardsOre };
   } catch (error) {
     console.error('Error reading miner ORE rewards:', error);
-    return null;
+    throw error;
   }
 }
 

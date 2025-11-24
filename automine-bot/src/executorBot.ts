@@ -104,10 +104,6 @@ async function main() {
         const automation = parseAutomationAccount(account.data);
         if (!automation) continue;
 
-        // Ignore automations with no usable balance
-        if (automation.balance <= BigInt(0)) continue;
-        if (automation.balance < automation.amount + automation.fee) continue;
-
         const authority = automation.authority;
 
         // Load miner state for this authority so we can follow the official
@@ -156,6 +152,49 @@ async function main() {
         const minerRoundId = new BN(data.slice(offset, offset + 8), 'le');
 
         const needsCheckpoint = !checkpointId.eq(minerRoundId);
+
+        const canDeploy = automation.balance >= automation.amount + automation.fee;
+
+        // If we can no longer deploy (automation balance exhausted) but there is
+        // still an outstanding round that hasn't been checkpointed, send a
+        // checkpoint-only transaction so the last round's SOL rewards are
+        // realized into the Miner account.
+        if (!canDeploy && needsCheckpoint) {
+          const { blockhash, lastValidBlockHeight } =
+            await connection.getLatestBlockhash('confirmed');
+
+          const checkpointTx = new Transaction().add(
+            createCheckpointInstruction({
+              signer: executorKeypair.publicKey,
+              authority,
+              roundId: minerRoundId,
+            }),
+          );
+          checkpointTx.recentBlockhash = blockhash;
+          checkpointTx.feePayer = executorKeypair.publicKey;
+          checkpointTx.sign(executorKeypair);
+
+          const sig = await connection.sendRawTransaction(checkpointTx.serialize(), {
+            skipPreflight: false,
+            maxRetries: 3,
+          });
+
+          await connection.confirmTransaction(
+            { signature: sig, blockhash, lastValidBlockHeight },
+            'confirmed',
+          );
+
+          console.log(
+            `✅ Final checkpoint for authority ${authority.toBase58()} via automation ${pubkey.toBase58()} on round ${minerRoundId.toString()}. Tx: ${sig}`,
+          );
+          // After this, checkpoint_id == miner_round_id, so we won't repeat.
+          continue;
+        }
+
+        // If we can't deploy and no checkpoint is needed, skip this automation.
+        if (!canDeploy) {
+          continue;
+        }
 
         // For automation, deploy.rs uses automation.amount and automation.strategy/mask.
         const squares: boolean[] = Array(25)

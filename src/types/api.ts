@@ -44,6 +44,12 @@ export interface PriceSnapshot {
   priceUsdRaw: string;
 }
 
+export interface RoundWinnerSnapshot {
+  authority: string;
+  solWon: string;
+  oreWon: string;
+}
+
 // Round Result Snapshot
 export interface RoundResultSnapshot {
   roundId: string;
@@ -58,6 +64,7 @@ export interface RoundResultSnapshot {
   totalWinningsSol: string;
   individualWinner?: string;
   individualWinnerAddress?: string;
+  winners?: RoundWinnerSnapshot[];
 }
 
 // Complete State Response

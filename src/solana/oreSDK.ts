@@ -17,11 +17,17 @@ import {
   ORE_PROGRAM_ID,
   ORE_TREASURY,
   ENTROPY_API_PROGRAM_ID,
+  ORE_MINT,
   stringToUint8Array,
   encodeU64,
   encodeU32,
 } from './oreProgram';
 import { ORE_DISCRIMINATORS } from './oreDiscriminators';
+import {
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+} from '@solana/spl-token';
 
 // 1-byte enum discriminator (Steel framework style)
 // From instruction.rs: Deploy = 6 (u8)
@@ -197,6 +203,46 @@ export function claimSol(signer: PublicKey): TransactionInstruction {
       { pubkey: signer, isSigner: true, isWritable: true },
       { pubkey: minerAddress, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(instructionData),
+  });
+}
+
+/**
+ * Create ClaimORE instruction
+ * From IDL: claimOre(signer, miner, mint, recipient, treasury, treasuryTokens, systemProgram, tokenProgram, associatedTokenProgram)
+ * Claims all ORE rewards (refined + unrefined) into the user's ORE token account.
+ */
+export function claimOre(signer: PublicKey): TransactionInstruction {
+  const minerAddress = minerPDA(signer)[0];
+
+  // Derive user's associated ORE token account
+  const recipient = getAssociatedTokenAddressSync(ORE_MINT, signer);
+
+  // Treasury and its ORE token account
+  const treasury = ORE_TREASURY;
+  // Treasury is a PDA (off-curve), so we must allow off-curve owners when deriving its ATA.
+  const treasuryTokens = getAssociatedTokenAddressSync(ORE_MINT, treasury, true);
+
+  // Instruction data: just 1-byte discriminator for ClaimORE
+  const instructionData = new Uint8Array([
+    ...ORE_DISCRIMINATORS.CLAIM_ORE,
+  ]);
+
+  // Account order from IDL:
+  // signer, miner, mint, recipient, treasury, treasuryTokens, systemProgram, tokenProgram, associatedTokenProgram
+  return new TransactionInstruction({
+    programId: ORE_PROGRAM_ID,
+    keys: [
+      { pubkey: signer, isSigner: true, isWritable: true },
+      { pubkey: minerAddress, isSigner: false, isWritable: true },
+      { pubkey: ORE_MINT, isSigner: false, isWritable: false },
+      { pubkey: recipient, isSigner: false, isWritable: true },
+      { pubkey: treasury, isSigner: false, isWritable: true },
+      { pubkey: treasuryTokens, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
     data: Buffer.from(instructionData),
   });

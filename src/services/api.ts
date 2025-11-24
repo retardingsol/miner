@@ -9,6 +9,7 @@ import type {
   RoundSnapshot,
   RoundResultSnapshot,
   TreasurySnapshot,
+  RoundWinnerSnapshot,
 } from '../types/api';
 
 /**
@@ -108,6 +109,13 @@ export async function getState(): Promise<StateResponse> {
     totalWinningsSol: winner.totalWinningsSol || '0',
     individualWinner: winner.topMiner || undefined,
     individualWinnerAddress: winner.topMiner && winner.topMiner !== '11111111111111111111111111111111' ? winner.topMiner : undefined,
+    winners: Array.isArray(winner.winners)
+      ? (winner.winners as any[]).map((w): RoundWinnerSnapshot => ({
+          authority: w.authority || w.address || w.miner || '',
+          solWon: w.solWon || w.sol || w.totalSol || '0',
+          oreWon: w.oreWon || w.ore || w.totalOre || '0',
+        }))
+      : undefined,
   } : null;
   
   // Transform treasury

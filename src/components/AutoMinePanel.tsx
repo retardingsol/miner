@@ -5,6 +5,7 @@ import BN from 'bn.js';
 import { SolanaLogo } from './SolanaLogo';
 import {
   claimRewards,
+  claimAllRewards,
   getMinerBalance,
   getAllBlocksMask,
   setupMiningAutomation,
@@ -12,7 +13,6 @@ import {
   getAutomationInfo,
   stopMiningAutomation,
 } from '../services/miningService';
-import { automationPDA, minerPDA } from '../solana/oreSDK';
 import {
   createOrGetBurner,
   createAutoMineSession,
@@ -77,7 +77,7 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     mask: BN;
     strategy: number;
   } | null>(null);
-  const [setupRentSol, setSetupRentSol] = useState<number>(0);
+  const [showClaimOreModal, setShowClaimOreModal] = useState(false);
 
   // Get current blocks based on risk profile
   const currentBlocks = RISK_PROFILE_BLOCKS[riskProfile];
@@ -193,76 +193,21 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     const fetchOreRewards = async () => {
       try {
         const rewards = await getMinerOreRewards(connection, publicKey);
-        if (!rewards) {
-          setUnrefinedOre(null);
-          setRefinedOre(null);
-          return;
+        if (rewards) {
+          // On-chain rewards are stored as u64 with 11 decimal fixed point (same as profile pages)
+          const ORE_CONVERSION_FACTOR = 1e11;
+          setUnrefinedOre(rewards.rewardsOre.toNumber() / ORE_CONVERSION_FACTOR);
+          setRefinedOre(rewards.refinedOre.toNumber() / ORE_CONVERSION_FACTOR);
         }
-
-        // On-chain rewards are stored as u64 with 11 decimal fixed point (same as profile pages)
-        const ORE_CONVERSION_FACTOR = 1e11;
-        setUnrefinedOre(rewards.rewardsOre.toNumber() / ORE_CONVERSION_FACTOR);
-        setRefinedOre(rewards.refinedOre.toNumber() / ORE_CONVERSION_FACTOR);
       } catch (err) {
         console.warn('Error fetching ORE rewards for autominer panel:', err);
-        setUnrefinedOre(null);
-        setRefinedOre(null);
+        // Keep previously displayed rewards instead of clearing to avoid flicker.
       }
     };
 
     fetchOreRewards();
     const interval = setInterval(fetchOreRewards, 30000);
     return () => clearInterval(interval);
-  }, [connected, publicKey, connection]);
-
-  // Estimate one-time rent needed to create Automation + Miner accounts (if missing),
-  // so the UI can show an initial transaction total that matches the wallet popup.
-  useEffect(() => {
-    if (!connected || !publicKey) {
-      setSetupRentSol(0);
-      return;
-    }
-
-    let cancelled = false;
-
-    const estimateRent = async () => {
-      try {
-        const [minerAddress] = minerPDA(publicKey);
-        const [automationAddress] = automationPDA(publicKey);
-
-        const [minerAccount, automationAccount] = await Promise.all([
-          connection.getAccountInfo(minerAddress, 'confirmed'),
-          connection.getAccountInfo(automationAddress, 'confirmed'),
-        ]);
-
-        let rentLamports = 0;
-
-        // Miner account: we know from parsing that data length is at least 536 bytes.
-        if (!minerAccount) {
-          rentLamports += await connection.getMinimumBalanceForRentExemption(536);
-        }
-
-        // Automation account: struct fields sum to 112 bytes (including discriminator).
-        if (!automationAccount) {
-          rentLamports += await connection.getMinimumBalanceForRentExemption(112);
-        }
-
-        if (!cancelled) {
-          setSetupRentSol(rentLamports / LAMPORTS_PER_SOL);
-        }
-      } catch (err) {
-        console.warn('Error estimating setup rent for autominer:', err);
-        if (!cancelled) {
-          setSetupRentSol(0);
-        }
-      }
-    };
-
-    estimateRent();
-
-    return () => {
-      cancelled = true;
-    };
   }, [connected, publicKey, connection]);
 
   // Load burner / session from localStorage in dev so we can resume state between reloads
@@ -394,12 +339,6 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
   const total = useMemo(() => {
     return totalPerRound * (rounds || 0);
   }, [totalPerRound, rounds]);
-
-  // First transaction total includes per-round deposit plus one-time rent if accounts are new.
-  const initialTxTotalSol = useMemo(
-    () => total + (automationActive ? 0 : setupRentSol),
-    [total, setupRentSol, automationActive],
-  );
 
   const selectedSquares = useMemo(() => {
     return currentBlocks
@@ -573,6 +512,41 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     }
   };
 
+  const handleClaimAllRewards = async () => {
+    if (!connected || !publicKey || !signTransaction) {
+      setError('Please connect your wallet');
+      return;
+    }
+
+    const totalOre = (unrefinedOre || 0) + (refinedOre || 0);
+    if (minerBalance.isZero() && totalOre <= 0) {
+      setError('No rewards available to claim');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const signature = await claimAllRewards(connection, publicKey, signTransaction);
+      setSuccess(
+        `Claimed all rewards. Transaction: ${signature.slice(0, 8)}...`,
+      );
+
+      // Optimistically reset local reward state; polling hooks will refresh.
+      setMinerBalance(new BN(0));
+      setUnrefinedOre(0);
+      setRefinedOre(0);
+      setShowClaimOreModal(false);
+    } catch (err) {
+      console.error('Error claiming all rewards:', err);
+      setError(err instanceof Error ? err.message : 'Failed to claim all rewards');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSetupAutomation = async () => {
     if (!connected || !publicKey || !signTransaction) {
       setError('Connect your wallet to configure auto-mining.');
@@ -586,7 +560,7 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
 
     const lamports = await connection.getBalance(publicKey, 'confirmed');
     const walletSol = lamports / LAMPORTS_PER_SOL;
-    const requiredSol = initialTxTotalSol;
+    const requiredSol = total;
 
     if (requiredSol > walletSol) {
       setError(
@@ -623,9 +597,9 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
       );
 
       setSuccess(
-        `Auto-mining automation configured. First transaction used approximately ${formatSolDisplay(
+        `Auto-mining automation configured for ${formatSolDisplay(
           requiredSol,
-        )} SOL (deposit + rent) across ${rounds} round(s).`,
+        )} SOL across ${rounds} round(s).`,
       );
 
       // Refresh automation info so UI immediately reflects active state
@@ -855,11 +829,6 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
 
       {/* Totals / Autominer summary */}
       <div className="mb-3 space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">Blocks</span>
-          <span className="text-xs font-semibold text-slate-200">Random ×{actualBlocks}</span>
-        </div>
-
         {automationActive ? (
           <>
             <div className="flex items-center justify-between">
@@ -889,22 +858,6 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
                 {total % 1 === 0 ? total.toFixed(0) : total.toFixed(4)} SOL
               </span>
             </div>
-        {setupRentSol > 0 && (
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">One-time rent / setup</span>
-            <span className="text-xs font-semibold text-slate-200">
-              {setupRentSol.toFixed(4)} SOL
-            </span>
-          </div>
-        )}
-        {setupRentSol > 0 && (
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-400">Est. first tx total</span>
-            <span className="text-xs font-semibold text-slate-200">
-              {initialTxTotalSol.toFixed(4)} SOL
-            </span>
-          </div>
-        )}
           </>
         )}
       </div>
@@ -1033,7 +986,7 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
             type="button"
             onClick={handleClaimRewards}
             disabled={disabled || loading || !connected || minerBalanceSOL <= 0}
-            className="w-full py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+            className="w-full py-2 bg-white text-black hover:bg-slate-100 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-sm font-semibold rounded-full transition-colors flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
@@ -1042,7 +995,7 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
               </>
             ) : (
               <>
-                <SolanaLogo width={14} height={14} />
+                <SolanaLogo width={16} height={16} />
                 <span>Claim {minerBalanceSOL.toFixed(4)} SOL</span>
               </>
             )}
@@ -1052,29 +1005,28 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
             onClick={() => {
               if (!connected || !publicKey) {
                 setError('Connect your wallet to claim ORE.');
-                    return;
-                  }
+                return;
+              }
               if ((unrefinedOre || 0) + (refinedOre || 0) <= 0) {
                 setError('No ORE rewards available to claim.');
-                    return;
-                  }
-              const ok = window.confirm(
-                'Claiming ORE will trigger the ORE program’s refining/claim logic and may incur a 10% fee on unrefined ORE.\n\nDo you want to continue?',
-              );
-              if (!ok) return;
-              // For now, redirect user to My Profile where full ORE claiming UX will live.
-              // A dedicated on-chain ClaimORE flow can be wired here later.
-              window.location.href = '/my-profile';
-                }}
+                return;
+              }
+              setShowClaimOreModal(true);
+            }}
             disabled={
               disabled ||
               loading ||
               !connected ||
               ((unrefinedOre || 0) + (refinedOre || 0) <= 0)
             }
-            className="w-full py-2 border border-amber-500 text-amber-300 hover:bg-amber-500/10 disabled:border-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-sm font-semibold rounded-lg transition-colors"
+            className="w-full py-2 border border-white text-white hover:bg-white/10 disabled:border-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-sm font-semibold rounded-full transition-colors flex items-center justify-center gap-2"
               >
-            Claim ORE
+            <img
+              src="/orelogo.jpg"
+              alt="ORE"
+              className="w-4 h-4 object-contain rounded"
+            />
+            <span>Claim all rewards</span>
               </button>
             </div>
           </div>
@@ -1088,6 +1040,78 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
       {success && (
         <div className="mb-3 p-2 bg-green-500/20 border border-green-500/50 rounded">
           <p className="text-xs text-green-300">{success}</p>
+        </div>
+      )}
+
+      {/* Claim ORE confirmation modal */}
+      {showClaimOreModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-[#111827] border border-slate-700 rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6">
+            <h3 className="text-lg font-semibold text-white mb-2">Claim rewards</h3>
+            <p className="text-xs text-slate-400 mb-4">
+              Are you sure you want to claim all your mining rewards, including refined and unrefined ORE?
+            </p>
+
+            <div className="space-y-2 mb-5 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-300 flex items-center gap-2">
+                  <SolanaLogo width={16} height={16} />
+                  <span>SOL</span>
+                </span>
+                <span className="font-semibold text-white">
+                  {minerBalanceSOL.toFixed(8)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 flex items-center gap-2">
+                  <img
+                    src="/orelogo.jpg"
+                    alt="ORE"
+                    className="w-4 h-4 object-contain rounded"
+                  />
+                  <span>Unrefined ORE</span>
+                </span>
+                <span className="font-semibold text-slate-100">
+                  {(unrefinedOre || 0).toFixed(8)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 flex items-center gap-2">
+                  <img
+                    src="/orelogo.jpg"
+                    alt="ORE"
+                    className="w-4 h-4 object-contain rounded"
+                  />
+                  <span>Refined ORE</span>
+                </span>
+                <span className="font-semibold text-slate-100">
+                  {(refinedOre || 0).toFixed(8)}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={handleClaimAllRewards}
+                className="w-full py-2 rounded-full bg-white text-black font-semibold text-sm hover:bg-slate-100 transition-colors flex items-center justify-center gap-2"
+              >
+                <img
+                  src="/orelogo.jpg"
+                  alt="ORE"
+                  className="w-4 h-4 object-contain rounded"
+                />
+                <span>Claim all rewards</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowClaimOreModal(false)}
+                className="w-full py-2 rounded-full bg-transparent text-slate-300 font-semibold text-sm hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1126,7 +1150,7 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
               : automationActive
               ? 'Stop autominer'
               : total > 0
-              ? `Automate ${formatSolDisplay(initialTxTotalSol)} SOL`
+              ? `Automate ${formatSolDisplay(total)} SOL`
               : 'Enter SOL & rounds'}
           </span>
         </button>

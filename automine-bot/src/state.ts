@@ -24,6 +24,19 @@ export function createSession(params: {
   rounds: number;
   initialDepositLamports: bigint;
 }): SessionConfig {
+  // Disallow more than one active session per main wallet. An active
+  // session is any that is not completed, stopped or errored.
+  for (const existing of sessions.values()) {
+    if (
+      existing.mainWallet === params.mainWallet &&
+      existing.status !== 'completed' &&
+      existing.status !== 'stopped' &&
+      existing.status !== 'error'
+    ) {
+      throw new Error('Active automine session already exists for this wallet');
+    }
+  }
+
   const now = Date.now();
   const sessionId = randomUUID();
   const session: SessionConfig = {

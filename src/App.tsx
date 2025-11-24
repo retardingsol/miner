@@ -469,6 +469,7 @@ function AppContent() {
                   roundStatus={status}
                   userBets={connected && publicKey ? userBets : null}
                   roundResults={roundResults}
+                  walletAddress={publicKey ? publicKey.toBase58() : null}
                 />
 
                 {/* Loading Indicator */}

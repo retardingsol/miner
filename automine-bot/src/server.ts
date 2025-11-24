@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
+import { createHash } from 'crypto';
 import { AutoMineBot } from './bot.js';
 import {
   getOrCreateBurner,
@@ -15,6 +16,25 @@ import type { BotContext, SessionConfig } from './types.js';
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
+
+// Secret used to derive burner wallets deterministically from a main wallet.
+// This ensures that redeploying the bot (or restarting the process) does NOT
+// change the burner linked to a given main wallet.
+const BURNER_DERIVATION_SECRET =
+  process.env.AUTOMINE_BURNER_SECRET || 'dev-automine-secret';
+
+function deriveDeterministicBurner(mainWallet: string): Keypair {
+  // Derive a 32-byte seed from (secret || mainWallet) using SHA-256.
+  // As long as BURNER_DERIVATION_SECRET is stable, the same mainWallet will
+  // always map to the same burner keypair across deployments.
+  const hash = createHash('sha256')
+    .update(BURNER_DERIVATION_SECRET)
+    .update(':')
+    .update(mainWallet)
+    .digest();
+  const seed = hash.subarray(0, 32);
+  return Keypair.fromSeed(seed);
+}
 
 async function main() {
   const app = express();
@@ -58,10 +78,16 @@ async function main() {
 
     let burner = findBurner(mainWallet);
     if (!burner) {
-      const keypair = Keypair.generate();
+      const keypair = deriveDeterministicBurner(mainWallet);
       const burnerSecretBase58 = bs58.encode(keypair.secretKey);
-      burner = getOrCreateBurner(mainWallet, keypair.publicKey.toBase58(), burnerSecretBase58);
-      console.log(`Created burner for ${mainWallet}: ${burner.burnerAddress}`);
+      burner = getOrCreateBurner(
+        mainWallet,
+        keypair.publicKey.toBase58(),
+        burnerSecretBase58,
+      );
+      console.log(
+        `Created deterministic burner for ${mainWallet}: ${burner.burnerAddress}`,
+      );
     }
 
     res.json({
@@ -88,22 +114,41 @@ async function main() {
 
     const burner = findBurner(mainWallet);
     if (!burner) {
-      return res.status(400).json({ error: 'Burner not found for mainWallet. Call /automine/burner first.' });
+      return res
+        .status(400)
+        .json({ error: 'Burner not found for mainWallet. Call /automine/burner first.' });
     }
 
-    const solPerBlockLamports = BigInt(Math.floor(solPerBlock * 1_000_000_000));
-    const initialDepositLamports = solPerBlockLamports * BigInt(blocks) * BigInt(rounds);
+    try {
+      const solPerBlockLamports = BigInt(
+        Math.floor(solPerBlock * 1_000_000_000),
+      );
+      const initialDepositLamports =
+        solPerBlockLamports * BigInt(blocks) * BigInt(rounds);
 
-    const session = createSession({
-      mainWallet,
-      burnerAddress: burner.burnerAddress,
-      solPerBlockLamports,
-      blocks,
-      rounds,
-      initialDepositLamports,
-    });
+      const session = createSession({
+        mainWallet,
+        burnerAddress: burner.burnerAddress,
+        solPerBlockLamports,
+        blocks,
+        rounds,
+        initialDepositLamports,
+      });
 
-    res.json(toApiSession(session));
+      res.json(toApiSession(session));
+    } catch (e) {
+      if (
+        e instanceof Error &&
+        e.message.includes('Active automine session already exists')
+      ) {
+        return res.status(400).json({ error: e.message });
+      }
+      console.error('Error creating session:', e);
+      return res.status(500).json({
+        error: 'Failed to create automine session',
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
   });
 
   // POST /automine/sessions/:id/start
