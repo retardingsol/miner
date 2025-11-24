@@ -8,8 +8,9 @@ import BN from 'bn.js';
 // === Core ORE program constants (mirrored from frontend sdk) ===
 
 // ORE program id (mining program)
+// From official IDL metadata: https://github.com/regolith-labs/ore/blob/master/api/idl.json
 export const ORE_PROGRAM_ID = new PublicKey(
-  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',
+  'oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv',
 );
 
 // Entropy API program – used for randomization
