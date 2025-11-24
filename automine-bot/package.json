@@ -20,6 +20,7 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/cors": "^2.8.17",
+    "@types/bn.js": "^5.1.5",
     "@types/node": "^22.7.4",
     "ts-node": "^10.9.2",
     "typescript": "~5.9.3"
