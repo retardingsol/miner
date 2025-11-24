@@ -19,9 +19,9 @@ import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddres
 import BN from 'bn.js';
 import { ORE_DISCRIMINATORS } from './oreDiscriminators';
 
-// ORE Program ID (mining program)
-// This matches the on-chain program ID used in production and in the bot.
-export const ORE_PROGRAM_ID = new PublicKey('LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo');
+// ORE Program ID (from official IDL metadata)
+// https://github.com/regolith-labs/ore/blob/master/api/idl.json
+export const ORE_PROGRAM_ID = new PublicKey('oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv');
 
 // ORE Token Mint Address
 export const ORE_MINT = new PublicKey('oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp');

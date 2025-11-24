@@ -61,12 +61,26 @@ export async function getCurrentRound(
       if (response.ok) {
         const data = await response.json();
         if (data.round?.roundId) {
-          const roundId = parseInt(data.round.roundId, 10);
-          return {
-            roundId: new BN(roundId),
-            isActive: true,
-            canDeploy: true,
-          };
+          const roundIdNum = parseInt(data.round.roundId, 10);
+          const roundIdBN = new BN(roundIdNum);
+
+          // Ensure the round account actually exists on-chain. The API can
+          // sometimes report a "future" round that has not been created yet,
+          // which would cause checkpoint() to fail with
+          // "Provided seeds do not result in a valid address".
+          const existsOnChain = await checkRoundStatus(connection, roundIdBN);
+          if (existsOnChain) {
+            return {
+              roundId: roundIdBN,
+              isActive: true,
+              canDeploy: true,
+            };
+          }
+
+          console.warn(
+            'API roundId does not yet exist on-chain, falling back to board account round:',
+            data.round.roundId,
+          );
         }
       }
     } catch (apiError) {
@@ -178,7 +192,7 @@ export async function setupMiningAutomation(
       useDonationWallet,
     });
     
-    // Create automate instruction
+    // Create automate instruction – no checkpoint in this transaction.
     const automateInstruction = automate(
       signer,
       amount,
@@ -225,6 +239,83 @@ export async function setupMiningAutomation(
       }
     } else {
     console.error('Error setting up automation:', error);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Stop / close an existing automation for the signer.
+ * This sends an Automate instruction with executor = Pubkey::default(),
+ * which triggers the close branch in the on-chain program.
+ */
+export async function stopMiningAutomation(
+  connection: Connection,
+  signer: PublicKey,
+  signTransaction: (tx: Transaction) => Promise<Transaction>
+): Promise<string> {
+  try {
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
+
+    // All-zero executor pubkey (Pubkey::default() on-chain)
+    const zeroExecutorBytes = new Uint8Array(32);
+    const zeroExecutor = new PublicKey(zeroExecutorBytes);
+
+    const amount = new BN(0);
+    const deposit = new BN(0);
+    const fee = new BN(0);
+    const mask = new BN(0);
+    const strategy = 0; // default
+
+    const automateInstruction = automate(
+      signer,
+      amount,
+      deposit,
+      zeroExecutor,
+      fee,
+      mask,
+      strategy
+    );
+
+    const transaction = new Transaction();
+    transaction.add(automateInstruction);
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = signer;
+
+    const signed = await signTransaction(transaction);
+    const signature = await connection.sendRawTransaction(signed.serialize(), {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
+
+    await connection.confirmTransaction(
+      {
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      },
+      'confirmed'
+    );
+
+    console.log('✅ Automation stop/close complete:', signature);
+    return signature;
+  } catch (error) {
+    if (error instanceof SendTransactionError) {
+      try {
+        const logs = await error.getLogs(connection);
+        console.error('Error stopping automation (SendTransactionError):', {
+          message: error.message,
+          logs,
+        });
+      } catch (logErr) {
+        console.error(
+          'Error stopping automation (SendTransactionError). Failed to fetch logs:',
+          error,
+          logErr
+        );
+      }
+    } else {
+      console.error('Error stopping automation:', error);
     }
     throw error;
   }

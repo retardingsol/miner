@@ -13,6 +13,11 @@ export const ORE_PROGRAM_ID = new PublicKey(
   'oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv',
 );
 
+// Treasury wallet (from API/health endpoint / frontend config)
+export const ORE_TREASURY = new PublicKey(
+  '45db2FSR4mcXdSVVZbKbwojU6uYDpMyhpEi7cC8nHaWG',
+);
+
 // Entropy API program – used for randomization
 export const ENTROPY_API_PROGRAM_ID = new PublicKey(
   '3jSkUuYBoJzQPMEzTvkDFXCZUBksPamrVhrnHR9igu2X',
@@ -21,6 +26,7 @@ export const ENTROPY_API_PROGRAM_ID = new PublicKey(
 // 1‑byte enum discriminator values (Steel framework)
 // See frontend `src/solana/oreDiscriminators.ts`
 const DEPLOY_DISCRIMINATOR = new Uint8Array([0x06]); // Deploy = 6 (u8)
+const CHECKPOINT_DISCRIMINATOR = new Uint8Array([0x02]); // Checkpoint = 2 (u8)
 
 // === Byte helpers (mirrored from frontend `oreProgram.ts`) ===
 
@@ -91,6 +97,53 @@ export function entropyVarPDA(
     [stringToUint8Array('var'), boardAddress.toBuffer(), encodeU64(varIdBN)],
     ENTROPY_API_PROGRAM_ID,
   );
+}
+
+/**
+ * Build a Checkpoint instruction for the ORE program.
+ *
+ * Rust SDK signature:
+ *   pub fn checkpoint(signer: Pubkey, authority: Pubkey, round_id: u64) -> Instruction
+ *
+ * This is called before Deploy in ore_refined to ensure the Miner has
+ * checkpointed for the current round, otherwise Deploy will panic with
+ * "Miner has not checkpointed".
+ */
+export function createCheckpointInstruction(params: {
+  signer: PublicKey;
+  authority: PublicKey;
+  roundId: BN | number | bigint;
+}): TransactionInstruction {
+  const { signer, authority, roundId } = params;
+
+  const roundIdBN =
+    roundId instanceof BN ? roundId : new BN(typeof roundId === 'bigint' ? roundId.toString() : roundId);
+
+  const minerAddress = minerPDA(authority)[0];
+  const boardAddress = boardPDA()[0];
+  const roundAddress = roundPDA(roundIdBN)[0];
+  const treasuryAddress = ORE_TREASURY;
+
+  const data = new Uint8Array([
+    ...CHECKPOINT_DISCRIMINATOR, // 1 byte
+  ]);
+
+  // Account order from SDK.rs:
+  // [signer, board_address, miner_address, round_address, treasury_address, system_program]
+  const keys = [
+    { pubkey: signer, isSigner: true, isWritable: true },
+    { pubkey: boardAddress, isSigner: false, isWritable: true },
+    { pubkey: minerAddress, isSigner: false, isWritable: true },
+    { pubkey: roundAddress, isSigner: false, isWritable: true },
+    { pubkey: treasuryAddress, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+
+  return new TransactionInstruction({
+    programId: ORE_PROGRAM_ID,
+    keys,
+    data: Buffer.from(data),
+  });
 }
 
 /**

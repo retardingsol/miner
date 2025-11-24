@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
-import { getState, getBids, getMinerStats } from './services/api';
-import { useWallet } from '@solana/wallet-adapter-react';
+import { getState, getBids } from './services/api';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { PublicKey } from '@solana/web3.js';
+import BN from 'bn.js';
+import { minerPDA } from './solana/oreSDK';
 import type { StateResponse, BidsResponse } from './types/api';
 import { Header } from './components/Header';
 import { GridVisualization } from './components/GridVisualization';
@@ -30,6 +33,7 @@ type View = 'dashboard' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 
 function AppContent() {
   const location = useLocation();
   const { publicKey, connected } = useWallet();
+  const { connection } = useConnection();
   const [state, setState] = useState<StateResponse | null>(null);
   const [bids, setBids] = useState<BidsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,25 +132,62 @@ function AppContent() {
     }
     
     try {
-      const statsAddress = publicKey.toBase58();
-      const minerStats = await getMinerStats(statsAddress);
+      const authority = publicKey;
+      const [minerAddress] = minerPDA(authority);
+      const minerAccount = await connection.getAccountInfo(minerAddress);
+      if (!minerAccount || minerAccount.data.length < 536) {
+        // No miner yet – keep previous bets instead of clearing to avoid flicker
+        return;
+      }
+
+      const data = minerAccount.data;
+      let offset = 8; // discriminator
+      offset += 32; // authority pubkey
+
+      // deployed[25] u64
+      const deployedLamports: number[] = [];
+      for (let i = 0; i < 25; i++) {
+        const lamportsBN = new BN(data.slice(offset, offset + 8), 'le');
+        deployedLamports.push(parseFloat(lamportsBN.toString()));
+        offset += 8;
+      }
+
+      // skip cumulative[25] u64
+      offset += 25 * 8;
+      // skip checkpoint_fee, checkpoint_id, last_claim_ore_at, last_claim_sol_at
+      offset += 8 * 4;
+      // skip rewards_factor (Numeric bits[16])
+      offset += 16;
+
+      // rewards_sol, rewards_ore, refined_ore
+      const rewardsSolBN = new BN(data.slice(offset, offset + 8), 'le');
+      offset += 8;
+      const rewardsOreBN = new BN(data.slice(offset, offset + 8), 'le');
+      offset += 8;
+      const refinedOreBN = new BN(data.slice(offset, offset + 8), 'le');
+      offset += 8;
+
+      // round_id
+      const roundIdBN = new BN(data.slice(offset, offset + 8), 'le');
+      offset += 8;
+      // lifetime_rewards_sol
+      const lifetimeSolBN = new BN(data.slice(offset, offset + 8), 'le');
+      offset += 8;
+      // lifetime_rewards_ore
+      const lifetimeOreBN = new BN(data.slice(offset, offset + 8), 'le');
       
       // Only show bets if they're from the current round and have meaningful amounts
       const currentRoundId = state.round.roundId;
-      const minerRoundId = minerStats.round_id?.toString();
+      const minerRoundId = roundIdBN.toString();
       
-      // If round changed, clear bets first
+      // If round changed, clear bets once
       if (lastRoundChecked && lastRoundChecked !== currentRoundId) {
         setUserBets(Array(25).fill(0));
       }
       
-      // Check if miner stats are for the current round
+      // If miner stats are not yet on the current round, keep showing previous bets
+      // instead of clearing every poll (avoids blinking).
       if (minerRoundId !== currentRoundId) {
-        // Not current round - clear bets and don't update
-        if (lastRoundChecked === currentRoundId) {
-          // Already checked this round and it's still not matching, clear
-          setUserBets(Array(25).fill(0));
-        }
         return;
       }
       
@@ -154,10 +195,10 @@ function AppContent() {
       setLastRoundChecked(currentRoundId);
       
       // deployed is an array of 25 numbers (lamports) representing SOL deployed per square
-      if (minerStats.deployed && Array.isArray(minerStats.deployed)) {
+      if (deployedLamports.length === 25) {
         const MIN_BET_THRESHOLD = 0.0001; // Only show bets above 0.0001 SOL to avoid noise
         
-        const bets = minerStats.deployed.map(lamports => {
+        const bets = deployedLamports.map(lamports => {
           const sol = lamports / LAMPORTS_PER_SOL;
           // Only return non-zero if above threshold
           return sol >= MIN_BET_THRESHOLD ? sol : 0;
@@ -171,13 +212,12 @@ function AppContent() {
             const changed = prevBets.some((prev, idx) => Math.abs(prev - bets[idx]) > 0.00001);
             return changed ? bets : prevBets;
           });
-        } else {
-          setUserBets(Array(25).fill(0));
         }
         
         // Track round changes and calculate winnings
-        const currentSolEarned = minerStats.lifetime_rewards_sol / LAMPORTS_PER_SOL;
-        const currentOreEarned = minerStats.lifetime_rewards_ore / ORE_CONVERSION_FACTOR;
+        const currentSolEarned = parseFloat(lifetimeSolBN.toString()) / LAMPORTS_PER_SOL;
+        const currentOreEarned =
+          parseFloat(lifetimeOreBN.toString()) / ORE_CONVERSION_FACTOR;
         
         // Check if round changed
         if (previousStats && previousStats.roundId !== currentRoundId && state.roundResult?.resultAvailable) {
@@ -203,13 +243,10 @@ function AppContent() {
           totalSolEarned: currentSolEarned,
           totalOreEarned: currentOreEarned,
         });
-      } else {
-        setUserBets(Array(25).fill(0));
       }
     } catch (err) {
-      // Silently fail - user might not have any bets
+      // Silently fail – keep previous bets to avoid flicker when RPC is flaky
       console.debug('Could not fetch user bets:', err);
-      setUserBets(Array(25).fill(0));
     }
   }, [connected, publicKey, state?.round, state?.roundResult, previousStats, lastRoundChecked]);
 

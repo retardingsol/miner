@@ -10,7 +10,9 @@ import {
   setupMiningAutomation,
   getMinerOreRewards,
   getAutomationInfo,
+  stopMiningAutomation,
 } from '../services/miningService';
+import { automationPDA, minerPDA } from '../solana/oreSDK';
 import {
   createOrGetBurner,
   createAutoMineSession,
@@ -75,6 +77,7 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     mask: BN;
     strategy: number;
   } | null>(null);
+  const [setupRentSol, setSetupRentSol] = useState<number>(0);
 
   // Get current blocks based on risk profile
   const currentBlocks = RISK_PROFILE_BLOCKS[riskProfile];
@@ -84,6 +87,27 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
   useEffect(() => {
     setBlocks(actualBlocks);
   }, [riskProfile, actualBlocks]);
+
+  // Derived automation state from on-chain Automation account
+  const automationActive =
+    automationInfo &&
+    automationInfo.exists &&
+    automationInfo.amount.gt(new BN(0)) &&
+    automationInfo.deposit.gt(new BN(0));
+
+  let automationRoundsRemaining = 0;
+  let automationTotalPerRoundSol = 0;
+
+  if (automationActive) {
+    const amountLamports = automationInfo!.amount;
+    const depositLamports = automationInfo!.deposit;
+    const totalPerRoundLamports = amountLamports.mul(new BN(actualBlocks));
+    if (totalPerRoundLamports.gt(new BN(0))) {
+      automationRoundsRemaining = depositLamports.div(totalPerRoundLamports).toNumber();
+      automationTotalPerRoundSol =
+        totalPerRoundLamports.toNumber() / LAMPORTS_PER_SOL;
+    }
+  }
 
   // Fetch miner balance
   useEffect(() => {
@@ -189,6 +213,56 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     fetchOreRewards();
     const interval = setInterval(fetchOreRewards, 30000);
     return () => clearInterval(interval);
+  }, [connected, publicKey, connection]);
+
+  // Estimate one-time rent needed to create Automation + Miner accounts (if missing),
+  // so the UI can show an initial transaction total that matches the wallet popup.
+  useEffect(() => {
+    if (!connected || !publicKey) {
+      setSetupRentSol(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    const estimateRent = async () => {
+      try {
+        const [minerAddress] = minerPDA(publicKey);
+        const [automationAddress] = automationPDA(publicKey);
+
+        const [minerAccount, automationAccount] = await Promise.all([
+          connection.getAccountInfo(minerAddress, 'confirmed'),
+          connection.getAccountInfo(automationAddress, 'confirmed'),
+        ]);
+
+        let rentLamports = 0;
+
+        // Miner account: we know from parsing that data length is at least 536 bytes.
+        if (!minerAccount) {
+          rentLamports += await connection.getMinimumBalanceForRentExemption(536);
+        }
+
+        // Automation account: struct fields sum to 112 bytes (including discriminator).
+        if (!automationAccount) {
+          rentLamports += await connection.getMinimumBalanceForRentExemption(112);
+        }
+
+        if (!cancelled) {
+          setSetupRentSol(rentLamports / LAMPORTS_PER_SOL);
+        }
+      } catch (err) {
+        console.warn('Error estimating setup rent for autominer:', err);
+        if (!cancelled) {
+          setSetupRentSol(0);
+        }
+      }
+    };
+
+    estimateRent();
+
+    return () => {
+      cancelled = true;
+    };
   }, [connected, publicKey, connection]);
 
   // Load burner / session from localStorage in dev so we can resume state between reloads
@@ -320,6 +394,12 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
   const total = useMemo(() => {
     return totalPerRound * (rounds || 0);
   }, [totalPerRound, rounds]);
+
+  // First transaction total includes per-round deposit plus one-time rent if accounts are new.
+  const initialTxTotalSol = useMemo(
+    () => total + (automationActive ? 0 : setupRentSol),
+    [total, setupRentSol, automationActive],
+  );
 
   const selectedSquares = useMemo(() => {
     return currentBlocks
@@ -506,7 +586,7 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
 
     const lamports = await connection.getBalance(publicKey, 'confirmed');
     const walletSol = lamports / LAMPORTS_PER_SOL;
-    const requiredSol = total;
+    const requiredSol = initialTxTotalSol;
 
     if (requiredSol > walletSol) {
       setError(
@@ -543,9 +623,9 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
       );
 
       setSuccess(
-        `Auto-mining automation configured for ${formatSolDisplay(
+        `Auto-mining automation configured. First transaction used approximately ${formatSolDisplay(
           requiredSol,
-        )} SOL across ${rounds} round(s).`,
+        )} SOL (deposit + rent) across ${rounds} round(s).`,
       );
 
       // Refresh automation info so UI immediately reflects active state
@@ -567,26 +647,42 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     }
   };
 
-  // Derived automation state from on-chain Automation account
-  const automationActive =
-    automationInfo &&
-    automationInfo.exists &&
-    automationInfo.amount.gt(new BN(0)) &&
-    automationInfo.deposit.gt(new BN(0));
-
-  let automationRoundsRemaining = 0;
-  let automationTotalPerRoundSol = 0;
-
-  if (automationActive) {
-    const amountLamports = automationInfo!.amount;
-    const depositLamports = automationInfo!.deposit;
-    const totalPerRoundLamports = amountLamports.mul(new BN(actualBlocks));
-    if (totalPerRoundLamports.gt(new BN(0))) {
-      automationRoundsRemaining = depositLamports.div(totalPerRoundLamports).toNumber();
-      automationTotalPerRoundSol =
-        totalPerRoundLamports.toNumber() / LAMPORTS_PER_SOL;
+  const handleStopAutomation = async () => {
+    if (!connected || !publicKey || !signTransaction) {
+      setError('Connect your wallet to stop automation.');
+      return;
     }
-  }
+
+    if (!automationActive) {
+      // Nothing to stop
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const signature = await stopMiningAutomation(connection, publicKey, signTransaction);
+      setSuccess(`Automation stopped. Transaction: ${signature.slice(0, 8)}...`);
+
+      // Refresh automation info so UI immediately reflects inactive state
+      try {
+        const info = await getAutomationInfo(connection, publicKey);
+        setAutomationInfo(info);
+      } catch (err) {
+        console.warn('Error refreshing automation info after stop:', err);
+        setAutomationInfo(null);
+      }
+    } catch (err) {
+      console.error('Error stopping ORE automation:', err);
+      setError(
+        err instanceof Error ? err.message : 'Failed to stop auto-mining automation.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="bg-[#21252C] border border-slate-700 rounded-lg p-3 mb-4 relative">
@@ -793,6 +889,22 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
                 {total % 1 === 0 ? total.toFixed(0) : total.toFixed(4)} SOL
               </span>
             </div>
+        {setupRentSol > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-400">One-time rent / setup</span>
+            <span className="text-xs font-semibold text-slate-200">
+              {setupRentSol.toFixed(4)} SOL
+            </span>
+          </div>
+        )}
+        {setupRentSol > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-400">Est. first tx total</span>
+            <span className="text-xs font-semibold text-slate-200">
+              {initialTxTotalSol.toFixed(4)} SOL
+            </span>
+          </div>
+        )}
           </>
         )}
       </div>
@@ -983,8 +1095,13 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
       <div className="space-y-2">
         <button
           type="button"
-          onClick={handleSetupAutomation}
-          disabled={disabled || loading || !connected || total <= 0 || !!automationActive}
+          onClick={automationActive ? handleStopAutomation : handleSetupAutomation}
+          disabled={
+            disabled ||
+            loading ||
+            !connected ||
+            (automationActive ? false : total <= 0)
+          }
           className="w-full py-2 bg-white text-black hover:bg-gray-100 disabled:bg-slate-800 disabled:text-slate-400 disabled:cursor-not-allowed text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1003,11 +1120,13 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
           </svg>
           <span>
             {loading
-              ? 'Configuring automation...'
+              ? automationActive
+                ? 'Stopping automation...'
+                : 'Configuring automation...'
               : automationActive
-              ? 'Automation running'
+              ? 'Stop autominer'
               : total > 0
-              ? `Automate ${formatSolDisplay(total)} SOL`
+              ? `Automate ${formatSolDisplay(initialTxTotalSol)} SOL`
               : 'Enter SOL & rounds'}
           </span>
         </button>

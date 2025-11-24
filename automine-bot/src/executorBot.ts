@@ -1,7 +1,12 @@
 import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { getCurrentRound } from './oreState.js';
-import { createDeployInstruction, ORE_PROGRAM_ID } from './oreProgram.js';
+import {
+  createDeployInstruction,
+  createCheckpointInstruction,
+  ORE_PROGRAM_ID,
+  minerPDA,
+} from './oreProgram.js';
 import BN from 'bn.js';
 
 const LAMPORTS_PER_SOL = 1_000_000_000n;
@@ -105,6 +110,53 @@ async function main() {
 
         const authority = automation.authority;
 
+        // Load miner state for this authority so we can follow the official
+        // rule from Discord: "Make sure you checkpoint prior to deploying
+        // if the miner.checkpoint_id != miner.round_id. In the same
+        // transaction is fine."
+        const [minerAddress] = minerPDA(authority);
+        const minerAccount = await connection.getAccountInfo(minerAddress, 'confirmed');
+        if (!minerAccount) {
+          console.warn(
+            `⏭️  Skipping automation ${pubkey.toBase58()} for authority ${authority.toBase58()}: miner account does not exist yet`,
+          );
+          continue;
+        }
+
+        const data = minerAccount.data;
+        if (data.length < 536) {
+          console.warn(
+            `⏭️  Skipping automation ${pubkey.toBase58()} for authority ${authority.toBase58()}: miner account too small (${data.length} bytes)`,
+          );
+          continue;
+        }
+
+        let offset = 8; // discriminator
+        offset += 32; // authority pubkey
+        offset += 25 * 8; // deployed[25]
+        offset += 25 * 8; // cumulative[25]
+
+        // checkpoint_fee: u64
+        offset += 8;
+
+        // checkpoint_id: u64
+        const checkpointId = new BN(data.slice(offset, offset + 8), 'le');
+        offset += 8;
+
+        // skip last_claim_ore_at, last_claim_sol_at, rewards_factor, rewards_sol,
+        // rewards_ore, refined_ore to reach round_id
+        offset += 8; // last_claim_ore_at (i64)
+        offset += 8; // last_claim_sol_at (i64)
+        offset += 16; // rewards_factor (Numeric bits[16])
+        offset += 8; // rewards_sol
+        offset += 8; // rewards_ore
+        offset += 8; // refined_ore
+
+        // round_id: u64
+        const minerRoundId = new BN(data.slice(offset, offset + 8), 'le');
+
+        const needsCheckpoint = !checkpointId.eq(minerRoundId);
+
         // For automation, deploy.rs uses automation.amount and automation.strategy/mask.
         const squares: boolean[] = Array(25)
           .fill(false)
@@ -113,6 +165,20 @@ async function main() {
         const { blockhash, lastValidBlockHeight } =
           await connection.getLatestBlockhash('confirmed');
 
+        const tx = new Transaction();
+
+        // If miner.checkpoint_id != miner.round_id, add a Checkpoint
+        // instruction for miner.round_id before deploying.
+        if (needsCheckpoint) {
+          const checkpointIx = createCheckpointInstruction({
+            signer: executorKeypair.publicKey,
+            authority,
+            roundId: minerRoundId,
+          });
+          tx.add(checkpointIx);
+        }
+
+        // Deploy using automation.amount on the current board round.
         const deployIx = createDeployInstruction({
           signer: executorKeypair.publicKey,
           authority,
@@ -121,7 +187,7 @@ async function main() {
           squares,
         });
 
-        const tx = new Transaction().add(deployIx);
+        tx.add(deployIx);
         tx.recentBlockhash = blockhash;
         tx.feePayer = executorKeypair.publicKey;
         tx.sign(executorKeypair);
