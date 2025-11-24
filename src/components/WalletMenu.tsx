@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { SolanaLogo } from './SolanaLogo';
 import { getWalletBalances, getHealth, getState, getBids, getMinerStats } from '../services/api';
+import { getMinerOreRewards } from '../services/miningService';
 import type { PriceSnapshot } from '../types/api';
 
 // Loading indicator component
@@ -114,14 +115,14 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
       try {
         await getState();
         const stateTime = ((performance.now() - stateStart) / 1000).toFixed(2);
-        setHealthStatus(prev => ({
-          ...prev,
-          state: {
-            connected: true,
-            responseTime: parseFloat(stateTime),
-            lastSuccess: new Date(),
-          },
-        }));
+          setHealthStatus(prev => ({
+            ...prev,
+            state: {
+              connected: true,
+              responseTime: parseFloat(stateTime),
+              lastSuccess: new Date(),
+            },
+          }));
       } catch (e) {
         // State check failed
         setHealthStatus(prev => ({
@@ -139,14 +140,14 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
       try {
         await getBids();
         const bidsTime = ((performance.now() - bidsStart) / 1000).toFixed(2);
-        setHealthStatus(prev => ({
-          ...prev,
-          bids: {
-            connected: true,
-            responseTime: parseFloat(bidsTime),
-            lastSuccess: new Date(),
-          },
-        }));
+          setHealthStatus(prev => ({
+            ...prev,
+            bids: {
+              connected: true,
+              responseTime: parseFloat(bidsTime),
+              lastSuccess: new Date(),
+            },
+          }));
       } catch (e) {
         // Bids check failed
         setHealthStatus(prev => ({
@@ -189,9 +190,34 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
         setSolBalance(null);
         setSolBalanceLoading(false);
       });
-    
+
     // Fetch ORE balances in parallel (can take longer, update when ready)
     setOreBalancesLoading(true);
+    try {
+      // Prefer direct on-chain Miner account rewards when available
+      const rewards = await getMinerOreRewards(connection, publicKey);
+      if (rewards) {
+        const unrefined = rewards.rewardsOre.toNumber() / ORE_CONVERSION_FACTOR;
+        const refined = rewards.refinedOre.toNumber() / ORE_CONVERSION_FACTOR;
+        const wallet = 0;
+        const staked = 0;
+        const total = unrefined + refined + staked + wallet;
+
+        setOreBalances({
+          wallet: wallet.toString(),
+          staked: staked.toString(),
+          refined: refined.toString(),
+          unrefined: unrefined.toString(),
+          total: total.toString(),
+        });
+        setOreBalancesLoading(false);
+        return;
+      }
+    } catch (onchainErr) {
+      console.warn('Error fetching on-chain miner ORE rewards for wallet menu:', onchainErr);
+    }
+
+    // Fallback: use Refinore balances API, then legacy miner stats if needed
     getWalletBalances(address)
       .then((oreData) => {
         console.log('ORE balances fetched:', oreData);

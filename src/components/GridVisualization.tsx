@@ -521,8 +521,8 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
         {/* Right side - Stats, Summary Cards */}
         <div className="flex-1 min-w-0 flex flex-col">
           <div className="space-y-3 flex-1">
-          {/* Stats in 3x2 grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
+          {/* Stats in 2 rows: 3 cards per row on large screens */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-2 sm:gap-3">
             {/* ORE Mining # */}
             {roundId && (
               <MouseTooltip
@@ -536,12 +536,12 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                   </>
                 }
               >
-                <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
+                <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col lg:col-span-2 ${tooltipsEnabled ? 'cursor-help' : ''}`}>
                   <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
                     <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
                     </svg>
-                    <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider truncate">Mining Round</p>
+                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider truncate">Round</p>
                   </div>
                   <p className="text-base sm:text-lg font-semibold text-slate-200">#{roundId}</p>
                 </div>
@@ -578,7 +578,108 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
               </MouseTooltip>
             )}
 
-            {/* Miners */}
+            {/* MOTHERLODE (first row) */}
+            <MouseTooltip
+              enabled={tooltipsEnabled}
+              content={
+                <>
+                  <p className="text-xs text-slate-300 mb-2 font-semibold">Motherlode</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Each round, +0.2 ORE is minted and added to the motherlode pool. When the winning block is revealed, there is a 1 in 625 chance that those winning miners will also hit the motherlode. If the motherlode is hit, the pool is split by the winning miners in proportion to the size of their claimed space on the winning block. Alternatively, if the motherlode is not hit, the pool keeps accumulating and will be distributed to winning miners when it is hit in a future round.
+                  </p>
+                </>
+              }
+            >
+              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
+                <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
+                  <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider truncate break-words">MOTHERLODE</p>
+                </div>
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <img 
+                    src="/orelogo.jpg" 
+                    alt="ORE" 
+                    className="w-5 h-5 sm:w-6 sm:h-6 object-contain rounded-lg flex-shrink-0"
+                  />
+                  <span className="text-base sm:text-lg font-bold text-amber-400">
+                    {motherlodeAmount.toFixed(1)}
+                  </span>
+                </div>
+                <p className="text-[10px] sm:text-xs text-slate-400 mt-1">{formatCurrency(motherlodeUsd)}</p>
+              </div>
+            </MouseTooltip>
+
+            {/* Average (first row) */}
+            <MouseTooltip
+              enabled={tooltipsEnabled}
+              content={
+                <>
+                  <p className="text-xs text-slate-300 mb-2 font-semibold">Average Deployed SOL</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Average amount of SOL deployed per square in the grid. Calculated as Total Deployed SOL divided by 25 (the number of squares).
+                  </p>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Formula: Total Deployed SOL ÷ 25 squares
+                  </p>
+                </>
+              }
+            >
+              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
+                <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
+                  <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                  </svg>
+                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider truncate">Average</p>
+                </div>
+                <div className="flex items-center gap-1 sm:gap-1.5">
+                  <SolanaLogo width={16} className="sm:w-[18px] flex-shrink-0" />
+                  <p className="text-base sm:text-lg font-semibold text-slate-200">{avgDeployed.toFixed(2)}</p>
+                </div>
+                <p className="text-[10px] sm:text-xs text-slate-400 mt-1">{formatCurrency(avgDeployed * solPrice)}</p>
+              </div>
+            </MouseTooltip>
+            
+            {/* TOTAL SOL (first row) */}
+            <MouseTooltip
+              enabled={tooltipsEnabled}
+              content={
+                <>
+                  <p className="text-xs text-slate-300 mb-2 font-semibold">Total SOL</p>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Total amount of SOL that has been deployed (bid) across all 25 squares in the current round. This is the sum of all miner bids placed on the grid.
+                  </p>
+                  <p className="text-xs text-slate-400 mt-2">
+                    This value is used in the Production Cost calculation and affects the breakeven price in the EV calculation.
+                  </p>
+                  {avgDeployed > 0 && (
+                    <p className="text-xs text-slate-400 mt-2">
+                      Average per square: {avgDeployed.toFixed(2)} SOL
+                    </p>
+                  )}
+                </>
+              }
+            >
+              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
+                <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
+                  <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z" />
+                    <path fillRule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clipRule="evenodd" />
+                  </svg>
+                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider truncate break-words">TOTAL SOL</p>
+                </div>
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <SolanaLogo width={20} className="sm:w-6 flex-shrink-0" />
+                  <span className="text-base sm:text-lg font-bold text-slate-100">
+                    {totalDeployedSol.toFixed(2)}
+                  </span>
+                </div>
+                <p className="text-[10px] sm:text-xs text-slate-400 mt-1">{formatCurrency(totalDeployedUsd)}</p>
+              </div>
+            </MouseTooltip>
+
+            {/* Miners (second row) */}
             {uniqueMiners !== undefined && (
               <MouseTooltip
                 enabled={tooltipsEnabled}
@@ -614,106 +715,7 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
               </MouseTooltip>
             )}
 
-            {/* Average */}
-            <MouseTooltip
-              enabled={tooltipsEnabled}
-              content={
-                <>
-                  <p className="text-xs text-slate-300 mb-2 font-semibold">Average Deployed SOL</p>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Average amount of SOL deployed per square in the grid. Calculated as Total Deployed SOL divided by 25 (the number of squares).
-                  </p>
-                  <p className="text-xs text-slate-400 mt-2">
-                    Formula: Total Deployed SOL ÷ 25 squares
-                  </p>
-                </>
-              }
-            >
-              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
-                <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
-                  <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
-                  </svg>
-                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider truncate">Average</p>
-                </div>
-                <div className="flex items-center gap-1 sm:gap-1.5">
-                  <SolanaLogo width={16} className="sm:w-[18px] flex-shrink-0" />
-                  <p className="text-base sm:text-lg font-semibold text-slate-200">{avgDeployed.toFixed(2)}</p>
-                </div>
-                <p className="text-[10px] sm:text-xs text-slate-400 mt-1">{formatCurrency(avgDeployed * solPrice)}</p>
-              </div>
-            </MouseTooltip>
-
-            {/* MOTHERLODE */}
-            <MouseTooltip
-              enabled={tooltipsEnabled}
-              content={
-                <>
-                  <p className="text-xs text-slate-300 mb-2 font-semibold">Motherlode</p>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Each round, +0.2 ORE is minted and added to the motherlode pool. When the winning block is revealed, there is a 1 in 625 chance that those winning miners will also hit the motherlode. If the motherlode is hit, the pool is split by the winning miners in proportion to the size of their claimed space on the winning block. Alternatively, if the motherlode is not hit, the pool keeps accumulating and will be distributed to winning miners when it is hit in a future round.
-                  </p>
-                </>
-              }
-            >
-              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
-                <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
-                  <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider truncate break-words">MOTHERLODE</p>
-                </div>
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <img 
-                    src="/orelogo.jpg" 
-                    alt="ORE" 
-                    className="w-5 h-5 sm:w-6 sm:h-6 object-contain rounded-lg flex-shrink-0"
-                  />
-                  <span className="text-base sm:text-lg font-bold text-amber-400">
-                    {motherlodeAmount.toFixed(1)}
-                  </span>
-                </div>
-                <p className="text-[10px] sm:text-xs text-slate-400 mt-1">{formatCurrency(motherlodeUsd)}</p>
-              </div>
-            </MouseTooltip>
-
-            {/* TOTAL DEPLOYED */}
-            <MouseTooltip
-              enabled={tooltipsEnabled}
-              content={
-                <>
-                  <p className="text-xs text-slate-300 mb-2 font-semibold">Total Deployed SOL</p>
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Total amount of SOL that has been deployed (bid) across all 25 squares in the current round. This is the sum of all miner bids placed on the grid.
-                  </p>
-                  <p className="text-xs text-slate-400 mt-2">
-                    This value is used in the Production Cost calculation and affects the breakeven price in the EV calculation.
-                  </p>
-                  {avgDeployed > 0 && (
-                    <p className="text-xs text-slate-400 mt-2">
-                      Average per square: {avgDeployed.toFixed(2)} SOL
-                    </p>
-                  )}
-                </>
-              }
-            >
-              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-3 border border-slate-700 hover:border-slate-600 transition-colors h-full flex flex-col ${tooltipsEnabled ? 'cursor-help' : ''}`}>
-                <div className="flex items-center gap-1 sm:gap-1.5 mb-1 min-w-0">
-                  <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z" />
-                    <path fillRule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clipRule="evenodd" />
-                  </svg>
-                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider truncate break-words">TOTAL DEPLOYED</p>
-                </div>
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <SolanaLogo width={20} className="sm:w-6 flex-shrink-0" />
-                  <span className="text-base sm:text-lg font-bold text-slate-100">
-                    {totalDeployedSol.toFixed(2)}
-                  </span>
-                </div>
-                <p className="text-[10px] sm:text-xs text-slate-400 mt-1">{formatCurrency(totalDeployedUsd)}</p>
-              </div>
-            </MouseTooltip>
+            {/* EXPECTED VALUE CALCULATOR temporarily hidden */}
           </div>
 
           {/* Round Results Display - Shows SOL and ORE won after round ends */}
@@ -748,97 +750,10 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
             </div>
           )}
 
-          {/* Auto-mine configuration */}
+          {/* Auto-mine configuration - directly below the two stats rows */}
           <div className="mb-3">
             <AutoMinePanel />
           </div>
-
-          {/* EV CALCULATOR - Hidden on Martingale page */}
-          {!martingaleStats && (
-            <MouseTooltip
-              enabled={tooltipsEnabled}
-              content={
-                <>
-                  <p className="text-xs text-slate-300 mb-2 font-semibold">How it works:</p>
-                  <p className="text-xs text-slate-300 mb-2 leading-relaxed">
-                    Breakeven = 0.1 × Total SOL Deployed / (1 + Motherlode / 625)
-                  </p>
-                  <p className="text-xs text-slate-400 mb-3 leading-relaxed">
-                    This represents the effective cost per ORE when mining, accounting for the 10% protocol fee and expected motherlode rewards.
-                  </p>
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex items-start gap-2">
-                      <span className="text-green-400">•</span>
-                      <span className="text-slate-300">If market price &gt; breakeven: <span className="text-green-400">Mining shows better expected value</span></span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="text-red-400">•</span>
-                      <span className="text-slate-300">If market price &lt; breakeven: <span className="text-red-400">Buying off market shows better expected value</span></span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="text-yellow-400">•</span>
-                      <span className="text-slate-300">If prices are close (±5%): <span className="text-yellow-400">Expected outcomes are roughly equivalent</span></span>
-                    </div>
-                  </div>
-                </>
-              }
-            >
-              <div className={`bg-[#21252C] rounded-lg p-2 sm:p-4 border border-slate-700 hover:border-slate-600 transition-colors h-full ${tooltipsEnabled ? 'cursor-help' : ''}`}>
-                <div className="flex items-center gap-1 sm:gap-1.5 mb-2 sm:mb-3 min-w-0">
-                  <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
-                  </svg>
-                  <p className="text-[10px] sm:text-xs text-slate-400 uppercase tracking-wider break-words">
-                    Expected Value Calculator
-                  </p>
-                </div>
-                
-                {/* Production Cost, Breakeven Price, Market Price, and Expected Value on same line */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-                  {/* Production Cost */}
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Production Cost</p>
-                    <div className="flex items-center gap-1.5">
-                      <SolanaLogo width={18} height={18} />
-                      <p className="text-lg font-bold text-slate-100">{productionCostSol.toFixed(2)}</p>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(productionCostUsd)}</p>
-                  </div>
-                  
-                  {/* Breakeven Price */}
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Breakeven Price</p>
-                    <div className="flex items-center gap-1.5">
-                      <SolanaLogo width={18} height={18} />
-                      <p className="text-lg font-bold text-slate-100">{breakevenPriceSol.toFixed(2)}</p>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(breakevenPriceUsd)}</p>
-                  </div>
-                  
-                  {/* Market Price */}
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Market Price</p>
-                    <div className="flex items-center gap-1.5">
-                      <SolanaLogo width={18} height={18} />
-                      <p className="text-lg font-bold text-blue-400">{marketPriceSol.toFixed(2)}</p>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">{formatCurrency(marketPriceUsd)}</p>
-                  </div>
-                  
-                  {/* Expected Value */}
-                  <div>
-                    <p className="text-xs text-slate-400 mb-1">Expected Value</p>
-                    <p className={`text-lg font-bold ${isNegativeEV ? 'text-red-400' : 'text-green-400'}`}>
-                      {expectedValue.toFixed(1)}%
-                    </p>
-                    <p className={`text-xs ${isNegativeEV ? 'text-red-400/70' : 'text-green-400/70'} mt-0.5`}>
-                      {formatCurrency(marketPriceUsd - breakevenPriceUsd)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </MouseTooltip>
-          )}
 
           {/* Martingale Stats */}
           {martingaleStats ? (

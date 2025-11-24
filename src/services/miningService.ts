@@ -224,7 +224,7 @@ export async function setupMiningAutomation(
         console.error('Error setting up automation (SendTransactionError). Failed to fetch logs:', error, logErr);
       }
     } else {
-      console.error('Error setting up automation:', error);
+    console.error('Error setting up automation:', error);
     }
     throw error;
   }
@@ -424,11 +424,89 @@ export async function getMinerBalance(
       return new BN(0);
     }
     
-    // Miner account balance is the SOL available to claim
-    return new BN(minerAccount.lamports);
+    const data = minerAccount.data;
+    if (data.length < 536) {
+      console.warn('Miner account data too short to parse rewards_sol:', data.length);
+      return new BN(0);
+    }
+
+    let offset = 8; // skip discriminator
+    offset += 32; // authority
+    offset += 25 * 8; // deployed[25]
+    offset += 25 * 8; // cumulative[25]
+    offset += 8; // checkpoint_fee
+    offset += 8; // checkpoint_id
+    offset += 8; // last_claim_ore_at
+    offset += 8; // last_claim_sol_at
+    offset += 16; // rewards_factor (Numeric)
+
+    // rewards_sol: u64
+    const rewardsSol = new BN(data.slice(offset, offset + 8), 'le');
+    return rewardsSol;
   } catch (error) {
     console.error('Error getting miner balance:', error);
     return new BN(0);
+  }
+}
+
+export interface MinerOreRewards {
+  rewardsOre: BN;
+  refinedOre: BN;
+  lifetimeRewardsOre: BN;
+}
+
+/**
+ * Read ORE rewards directly from the on-chain Miner account using the IDL layout.
+ */
+export async function getMinerOreRewards(
+  connection: Connection,
+  authority: PublicKey
+): Promise<MinerOreRewards | null> {
+  try {
+    const minerAddress = minerPDA(authority)[0];
+    const minerAccount = await connection.getAccountInfo(minerAddress);
+
+    if (!minerAccount) {
+      return null;
+    }
+
+    const data = minerAccount.data;
+    // Minimum expected size for Miner account based on IDL fields
+    if (data.length < 536) {
+      console.warn('Miner account data too short to parse rewards:', data.length);
+      return null;
+    }
+
+    let offset = 8; // skip 8-byte account discriminator
+    offset += 32; // authority: publicKey
+    offset += 25 * 8; // deployed: [u64; 25]
+    offset += 25 * 8; // cumulative: [u64; 25]
+    offset += 8; // checkpoint_fee: u64
+    offset += 8; // checkpoint_id: u64
+    offset += 8; // last_claim_ore_at: i64
+    offset += 8; // last_claim_sol_at: i64
+    offset += 16; // rewards_factor: Numeric (16 bytes)
+
+    // rewards_sol: u64 (ignored here)
+    offset += 8;
+
+    const rewardsOre = new BN(data.slice(offset, offset + 8), 'le');
+    offset += 8;
+
+    const refinedOre = new BN(data.slice(offset, offset + 8), 'le');
+    offset += 8;
+
+    // round_id: u64
+    offset += 8;
+    // lifetime_rewards_sol: u64
+    offset += 8;
+
+    const lifetimeRewardsOre = new BN(data.slice(offset, offset + 8), 'le');
+
+    return { rewardsOre, refinedOre, lifetimeRewardsOre };
+  } catch (error) {
+    console.error('Error reading miner ORE rewards:', error);
+    return null;
   }
 }
 
@@ -453,22 +531,36 @@ export async function getAutomationInfo(
     if (!automationAccount) {
       return null;
     }
-    
-    // Parse automation account data
-    // Structure: amount(u64) + deposit(u64) + fee(u64) + mask(u64) + strategy(u8)
     const data = automationAccount.data;
-    
-    let offset = 8; // Skip discriminator (8 bytes for account data)
+
+    // Parse automation account data according to IDL:
+    // struct Automation {
+    //   amount: u64,
+    //   authority: Pubkey,
+    //   balance: u64,
+    //   executor: Pubkey,
+    //   fee: u64,
+    //   strategy: u64,
+    //   mask: u64,
+    // }
+    let offset = 8; // Skip 8-byte discriminator
     const amount = new BN(data.slice(offset, offset + 8), 'le');
     offset += 8;
-    const deposit = new BN(data.slice(offset, offset + 8), 'le');
+    // authority pubkey (not needed here)
+    offset += 32;
+    const balance = new BN(data.slice(offset, offset + 8), 'le');
     offset += 8;
+    // executor pubkey (not needed here)
+    offset += 32;
     const fee = new BN(data.slice(offset, offset + 8), 'le');
     offset += 8;
-    const mask = new BN(data.slice(offset, offset + 8), 'le');
+    const strategyBN = new BN(data.slice(offset, offset + 8), 'le');
     offset += 8;
-    const strategy = data[offset];
-    
+    const mask = new BN(data.slice(offset, offset + 8), 'le');
+
+    const deposit = balance;
+    const strategy = strategyBN.toNumber();
+
     return {
       exists: true,
       amount,

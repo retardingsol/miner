@@ -254,7 +254,8 @@ export async function getWalletBalance(address: string): Promise<number> {
 /**
  * Fetches leaderboard data from the leaderboard API
  */
-export async function getLeaderboard(): Promise<Array<{
+export async function getLeaderboard(): Promise<
+  Array<{
   pubkey: string;
   rounds_played: number;
   rounds_won: number;
@@ -263,14 +264,23 @@ export async function getLeaderboard(): Promise<Array<{
   total_ore_earned: number;
   net_sol_change: number;
   sol_balance_direction: string;
-}>> {
+  }>
+> {
+  try {
   const response = await fetch('https://kriptikz.dev/leaderboard/all-time');
   
   if (!response.ok) {
-    throw new Error(`Failed to fetch leaderboard: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Failed to fetch leaderboard: ${response.status} ${response.statusText}`,
+      );
   }
   
   return response.json();
+  } catch (error) {
+    // This data is non-critical for the app; log and return empty list so UI can still render.
+    console.warn('getLeaderboard: failed to load leaderboard data', error);
+    return [];
+  }
 }
 
 /**
@@ -292,22 +302,51 @@ export async function getMinerStats(walletAddress: string): Promise<{
   lifetime_rewards_sol: number;
   lifetime_rewards_ore: number;
 }> {
-  const response = await fetch(`https://kriptikz.dev/miner/latest/${walletAddress}`);
+  try {
+    const response = await fetch(
+      `https://kriptikz.dev/miner/latest/${walletAddress}`,
+    );
   
   if (!response.ok) {
     if (response.status === 404) {
       throw new Error('Miner not found');
     }
-    throw new Error(`Failed to fetch miner stats: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Failed to fetch miner stats: ${response.status} ${response.statusText}`,
+      );
   }
   
   return response.json();
+  } catch (error) {
+    // Miner stats are now only used as soft fallback; on failure return a zeroed record.
+    console.warn(
+      `getMinerStats: failed to load miner stats for ${walletAddress}`,
+      error,
+    );
+    return {
+      authority: walletAddress,
+      deployed: [],
+      total_deployed: 0,
+      cumulative: [],
+      checkpoint_fee: 0,
+      checkpoint_id: 0,
+      last_claim_ore_at: 0,
+      last_claim_sol_at: 0,
+      rewards_sol: 0,
+      rewards_ore: 0,
+      refined_ore: 0,
+      round_id: 0,
+      lifetime_rewards_sol: 0,
+      lifetime_rewards_ore: 0,
+    };
+  }
 }
 
 /**
  * Fetches ORE leaders from the miners API (sorted by unclaimed ORE)
  */
-export async function getOreLeaders(): Promise<Array<{
+export async function getOreLeaders(): Promise<
+  Array<{
   authority: string;
   deployed: number[];
   total_deployed: number;
@@ -322,14 +361,25 @@ export async function getOreLeaders(): Promise<Array<{
   round_id: number;
   lifetime_rewards_sol: number;
   lifetime_rewards_ore: number;
-}>> {
-  const response = await fetch('https://kriptikz.dev/miners?offset=0&order_by=unclaimed_ore');
+  }>
+> {
+  try {
+    const response = await fetch(
+      'https://kriptikz.dev/miners?offset=0&order_by=unclaimed_ore',
+    );
   
   if (!response.ok) {
-    throw new Error(`Failed to fetch ORE leaders: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Failed to fetch ORE leaders: ${response.status} ${response.statusText}`,
+      );
   }
   
   return response.json();
+  } catch (error) {
+    // Non-critical: used only for rank badges. Fall back to empty list.
+    console.warn('getOreLeaders: failed to load ORE leaders', error);
+    return [];
+  }
 }
 
 /**

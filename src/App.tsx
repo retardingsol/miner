@@ -128,8 +128,8 @@ function AppContent() {
     }
     
     try {
-      const address = publicKey.toBase58();
-      const minerStats = await getMinerStats(address);
+      const statsAddress = publicKey.toBase58();
+      const minerStats = await getMinerStats(statsAddress);
       
       // Only show bets if they're from the current round and have meaningful amounts
       const currentRoundId = state.round.roundId;

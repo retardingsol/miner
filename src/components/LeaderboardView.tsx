@@ -557,8 +557,8 @@ export function LeaderboardView() {
                         {(() => {
                           const prefix = address.slice(0, 6);
                           const pfpSrc = SPECIAL_WALLET_PFPS[prefix] || '/oreguidelogo.png';
-                          return (
-                            <img
+                            return (
+                              <img
                               src={pfpSrc}
                               alt={label || 'Wallet'}
                               className={`w-10 h-10 rounded-full border-2 border-slate-600 ${
@@ -566,15 +566,15 @@ export function LeaderboardView() {
                                   ? 'object-contain p-1.5'
                                   : 'object-cover'
                               }`}
-                              onError={(e) => {
+                                onError={(e) => {
                                 console.warn(`Failed to load image: ${pfpSrc}`);
-                                const img = e.currentTarget;
-                                img.onerror = null; // Prevent infinite loop
-                                img.src = '/oreguidelogo.png';
+                                  const img = e.currentTarget;
+                                  img.onerror = null; // Prevent infinite loop
+                                  img.src = '/oreguidelogo.png';
                                 img.className =
                                   'w-10 h-10 rounded-full border-2 border-slate-600 object-contain p-1.5';
-                              }}
-                              loading="eager"
+                                }}
+                                loading="eager"
                             />
                           );
                         })()}

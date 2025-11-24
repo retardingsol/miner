@@ -1,5 +1,3 @@
-import { API_BASE_URL } from '../types/api';
-
 // High-level session status reported by the backend bot
 export type AutoMineSessionStatus =
   | 'pending'
@@ -30,8 +28,11 @@ export interface AutoMineSession {
   lastError?: string | null;
 }
 
+// Default backend base URL (Render service). Can be overridden with VITE_AUTOMINE_API_URL.
+const DEFAULT_AUTOMINE_API_BASE = 'https://miner-x6do.onrender.com/automine';
+
 const AUTOMINE_API_BASE =
-  import.meta.env.VITE_AUTOMINE_API_URL || `${API_BASE_URL.replace(/\/$/, '')}/automine`;
+  import.meta.env.VITE_AUTOMINE_API_URL || DEFAULT_AUTOMINE_API_BASE;
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
