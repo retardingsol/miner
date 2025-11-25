@@ -21,7 +21,7 @@ declare global {
   }
 }
 
-type View = 'dashboard' | 'mines' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore' | 'miners' | 'dust-to-ore' | 'explore';
+type View = 'dashboard' | 'mines' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'profile' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore' | 'miners' | 'dust-to-ore' | 'explore' | 'monster-rewards';
 
 // Custom wallet connect button that shows "Connect" when disconnected
 function WalletConnectButtonCustom({ onWalletClick, onMobileWalletClick }: { onWalletClick?: () => void; onMobileWalletClick?: () => void }) {
@@ -119,6 +119,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
   const [mobileStatsDropdownOpen, setMobileStatsDropdownOpen] = useState(false);
   const [stakingSubmenuOpen, setStakingSubmenuOpen] = useState(false);
   const [stakingSubmenuTimeout, setStakingSubmenuTimeout] = useState<number | null>(null);
+  const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
   const [walletSearch, setWalletSearch] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchBarOpen, setSearchBarOpen] = useState(false);
@@ -147,7 +148,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
     if (path === '/revenue') return 'revenue';
     if (path === '/leaderboard') return 'leaderboard';
     if (path === '/strategies') return 'strategies';
-    if (path === '/my-profile') return 'merch';
+    if (path === '/my-profile') return 'profile';
     if (path === '/martingale') return 'martingale';
     if (path === '/staking') return 'staking';
     if (path === '/liquidity') return 'liquidity';
@@ -307,67 +308,57 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
               
               {/* Desktop Navigation */}
               <nav className="hidden lg:flex items-center gap-2">
-              <Link
-                to="/"
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                  activeView === 'mines'
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded" />
-                Mines
-              </Link>
-              <Link
-                to="/explore"
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                  activeView === 'explore'
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <SolanaLogo width={16} />
-                Explore
-              </Link>
-              <Link
-                to="/about"
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                  activeView === 'about'
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                About
-              </Link>
-              <Link
-                to="/my-profile"
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                  activeView === 'merch'
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                </svg>
-                My Profile
-              </Link>
-              <Link
-                to="/leaderboard"
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                  activeView === 'leaderboard'
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-                </svg>
-                Leaderboard
-              </Link>
+                <Link
+                  to="/"
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                    activeView === 'mines'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded" />
+                  Mines
+                </Link>
+                <Link
+                  to="/explore"
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeView === 'explore'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  Explore
+                </Link>
+                <Link
+                  to="/about"
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeView === 'about'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  About
+                </Link>
+                <Link
+                  to="/my-profile"
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeView === 'profile'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  Profile
+                </Link>
+                <Link
+                  to="/leaderboard"
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    activeView === 'leaderboard'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  Leaderboard
+                </Link>
               <div 
                 className="relative"
                 onMouseEnter={() => setStatsDropdownOpen(true)}
@@ -381,14 +372,11 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                   }`}
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                  </svg>
-                  Statistics
-                  <svg 
+                  Analytics
+                  <svg
                     className={`w-4 h-4 transition-transform ${statsDropdownOpen ? 'rotate-180' : ''}`}
-                    fill="none" 
-                    stroke="currentColor" 
+                    fill="none"
+                    stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -593,19 +581,47 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
                   </div>
                 )}
               </div>
-              <Link
-                to="/dust-to-ore"
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
-                  activeView === 'dust-to-ore'
-                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                }`}
+              <div
+                className="relative"
+                onMouseEnter={() => setToolDropdownOpen(true)}
+                onMouseLeave={() => setToolDropdownOpen(false)}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-                Dust to ORE
-              </Link>
+                <button
+                  onClick={() => setToolDropdownOpen(open => !open)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                    activeView === 'dust-to-ore'
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                    Tools
+                  <svg
+                    className={`w-4 h-4 ml-1 transition-transform ${toolDropdownOpen ? 'rotate-180' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {toolDropdownOpen && (
+                  <div className="absolute top-full left-0 pt-1 w-44 z-50">
+                    <div className="bg-black border-2 border-slate-600 rounded-lg shadow-xl">
+                      <Link
+                        to="/dust-to-ore"
+                        onClick={() => setToolDropdownOpen(false)}
+                        className={`w-full px-4 py-2 text-left text-sm transition-colors rounded-lg block ${
+                          activeView === 'dust-to-ore'
+                            ? 'bg-amber-500/20 text-amber-400'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        Dust to ORE
+                      </Link>
+                    </div>
+                  </div>
+                )}
+              </div>
             </nav>
         </div>
 
@@ -941,7 +957,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
                   to="/my-profile"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`w-full px-4 py-3 rounded-lg text-left font-medium transition-colors flex items-center gap-3 ${
-                    activeView === 'merch'
+                    activeView === 'profile'
                       ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                   }`}
