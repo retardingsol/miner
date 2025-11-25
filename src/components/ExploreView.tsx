@@ -49,9 +49,10 @@ const formatRelativeTime = (timestamp: string | number) => {
   return `${days}d ago`;
 };
 
+const lamportsToSol = (value: number) => value / 1e9;
 const formatSolValue = (value: number) => {
   if (!Number.isFinite(value)) return '0.0000';
-  return value.toFixed(4);
+  return lamportsToSol(value).toFixed(4);
 };
 
 const truncateAddress = (address: string | undefined) => {
@@ -126,16 +127,26 @@ export function ExploreView() {
   }, []);
 
   const winnerLookup = useMemo(() => {
-    const map = new Map<number, { winnersCount: number; winnerLabel?: string }>();
+      const map = new Map<
+        number,
+        { winnersCount: number; winnerLabel?: string; blockLabel?: string }
+      >();
     frames.forEach(frame => {
       const winner = frame.finalWinner || frame.optimisticWinner;
-      const roundId = Number(winner?.roundId ?? frame?.roundId ?? frame?.liveData?.roundId);
+      const roundId = Number(
+        winner?.roundId ?? frame?.roundId ?? frame?.liveData?.roundId,
+      );
       if (!Number.isFinite(roundId)) return;
       const winnersCount = Array.isArray(winner?.winners)
         ? winner.winners.length
         : winner?.winnersCount || (winner?.topMiner ? 1 : 0);
       const label = winner?.topMiner || winner?.winner || winner?.topMinerReward;
-      map.set(roundId, { winnersCount, winnerLabel: label });
+      const blockLabel =
+        winner?.winningSquareLabel ||
+        (typeof winner?.winningSquareIndex === 'number'
+          ? `#${winner.winningSquareIndex + 1}`
+          : undefined);
+      map.set(roundId, { winnersCount, winnerLabel: label, blockLabel });
     });
     return map;
   }, [frames]);
@@ -195,11 +206,12 @@ export function ExploreView() {
               winnerLabel === 'Split' || winnersCount > 1
                 ? 'Split'
                 : truncateAddress(winnerLabel);
-
+            const blockDisplay =
+              winnerMeta?.blockLabel || `#${row.winning_square ?? '—'}`;
             return (
               <tr key={row.id} className="border-t border-slate-800 text-slate-200">
                 <td className="py-3 pr-4 font-semibold text-slate-100">#{row.id.toLocaleString()}</td>
-                <td className="py-3 pr-4">{`#${row.winning_square}`}</td>
+                <td className="py-3 pr-4">{blockDisplay}</td>
                 <td className="py-3 pr-4 text-emerald-300">{winnerDisplay}</td>
                 <td className="py-3 pr-4">{winnersCount || '—'}</td>
                 <td className="py-3 pr-4">
@@ -300,7 +312,12 @@ export function ExploreView() {
                   <span>{row.oreBuried.toFixed(2)}</span>
                 </div>
               </td>
-              <td className="py-3 pr-4">{row.stakingYield.toFixed(4)}</td>
+              <td className="py-3 pr-4">
+                <div className="flex items-center gap-1">
+                  <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded" />
+                  <span>{row.stakingYield.toFixed(4)}</span>
+                </div>
+              </td>
             </tr>
           ))}
         </tbody>
