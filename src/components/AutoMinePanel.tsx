@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import BN from 'bn.js';
@@ -13,11 +13,9 @@ import {
   getAutomationInfo,
   stopMiningAutomation,
 } from '../services/miningService';
+import { getState } from '../services/api';
 import {
   createOrGetBurner,
-  createAutoMineSession,
-  startAutoMineSession,
-  stopAutoMineSession,
   getAutoMineSession,
   type AutoMineSession,
 } from '../services/automineService';
@@ -51,7 +49,7 @@ const RISK_PROFILE_BLOCKS: Record<RiskProfile, boolean[]> = {
 export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
   const { connection } = useConnection();
   const { publicKey, signTransaction, connected } = useWallet();
-  
+
   const [solAmount, setSolAmount] = useState<number>(0);
   const [solAmountInput, setSolAmountInput] = useState<string>(''); // Start empty; placeholder guides the user
   const [blocks, setBlocks] = useState<number>(25);
@@ -62,11 +60,10 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [minerBalance, setMinerBalance] = useState<BN>(new BN(0));
+  // Dev-only automine backend state (kept for potential future use)
   const [burnerAddress, setBurnerAddress] = useState<string | null>(null);
   const [session, setSession] = useState<AutoMineSession | null>(null);
   const [autoMining, setAutoMining] = useState(false);
-  const [burnerBalance, setBurnerBalance] = useState<number | null>(null);
-  const [walletBalanceSol, setWalletBalanceSol] = useState<number | null>(null);
   const [unrefinedOre, setUnrefinedOre] = useState<number | null>(null);
   const [refinedOre, setRefinedOre] = useState<number | null>(null);
   const [automationInfo, setAutomationInfo] = useState<{
@@ -78,6 +75,9 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     strategy: number;
   } | null>(null);
   const [showClaimOreModal, setShowClaimOreModal] = useState(false);
+  const [setupRentEstimateSol, setSetupRentEstimateSol] = useState(0);
+  const [automationSettling, setAutomationSettling] = useState(false);
+  const prevAutomationActiveRef = useRef(false);
 
   // Get current blocks based on risk profile
   const currentBlocks = RISK_PROFILE_BLOCKS[riskProfile];
@@ -130,10 +130,28 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     return () => clearInterval(interval);
   }, [connected, publicKey, connection]);
 
+  // After an automation finishes and the last deployed round has settled, force a
+  // fresh miner balance read so the final round of SOL rewards is reflected
+  // immediately instead of waiting for the next 30s poll.
+  useEffect(() => {
+    if (!connected || !publicKey) return;
+    if (automationActive || automationSettling) return;
+
+    (async () => {
+      try {
+        const balance = await getMinerBalance(connection, publicKey);
+        setMinerBalance(balance);
+      } catch (err) {
+        console.warn('Error refreshing miner balance after automation settled:', err);
+      }
+    })();
+  }, [automationActive, automationSettling, connected, publicKey, connection]);
+
   // Poll automation info so UI can reflect active automation state
   useEffect(() => {
     if (!connected || !publicKey) {
       setAutomationInfo(null);
+      setAutomationSettling(false);
       return;
     }
 
@@ -161,25 +179,116 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     };
   }, [connected, publicKey, connection]);
 
-  // Fetch main wallet SOL balance (for deploy validation / button state)
+  // Track when automation transitions from active -> inactive so we know to wait
+  // for the last deployed round to finish before allowing a new automation.
   useEffect(() => {
     if (!connected || !publicKey) {
-      setWalletBalanceSol(null);
+      prevAutomationActiveRef.current = false;
+      setAutomationSettling(false);
       return;
     }
 
-    const fetchWalletBalance = async () => {
-      try {
-        const lamports = await connection.getBalance(publicKey, 'confirmed');
-        setWalletBalanceSol(lamports / LAMPORTS_PER_SOL);
-      } catch (err) {
-        console.warn('Error fetching main wallet balance:', err);
+    const wasActive = prevAutomationActiveRef.current;
+    const isActive = !!automationActive;
+
+    // Detect falling edge: active -> inactive
+    if (wasActive && !isActive) {
+      setAutomationSettling(true);
     }
+
+    prevAutomationActiveRef.current = isActive;
+  }, [automationActive, connected, publicKey]);
+
+  // While automation is settling, poll ORE state and wait until the current round
+  // is no longer actively mining before we allow a new automation configuration.
+  useEffect(() => {
+    if (!automationSettling) return;
+
+    let cancelled = false;
+
+    const checkRoundStatus = async () => {
+      try {
+        const state = await getState();
+        const status = state.round?.mining.status;
+
+        if (!cancelled && status && status !== 'active') {
+          // Last round has finished; it's safe to configure a new automation.
+          setAutomationSettling(false);
+        }
+      } catch (err) {
+        console.warn('Error checking round status for automation settle:', err);
+      }
     };
 
-    fetchWalletBalance();
-    const interval = setInterval(fetchWalletBalance, 15000);
-    return () => clearInterval(interval);
+    checkRoundStatus();
+    const interval = setInterval(checkRoundStatus, 15000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [automationSettling]);
+
+  // Main wallet balance fetch was previously used for UI validation; it has
+  // been removed to simplify the autominer panel and avoid unused state.
+
+  // Estimate one-time rent-exempt SOL needed for Miner + Automation PDAs if they
+  // do not already exist. This lets the Automate button show a total that more
+  // closely matches the Phantom transaction amount.
+  useEffect(() => {
+    if (!connected || !publicKey) {
+      setSetupRentEstimateSol(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    const estimateRent = async () => {
+      try {
+        // Account sizes based on ORE IDL layout.
+        const MINER_ACCOUNT_SIZE = 536;
+        const AUTOMATION_ACCOUNT_SIZE = 112;
+
+        // We reuse miningService helpers, which derive PDAs internally, by
+        // asking for account info directly here.
+        const minerAddress = (await import('../solana/oreSDK')).minerPDA(publicKey)[0];
+        const automationAddress = (await import('../solana/oreSDK')).automationPDA(publicKey)[0];
+
+        const [minerAccount, automationAccount] = await Promise.all([
+          connection.getAccountInfo(minerAddress),
+          connection.getAccountInfo(automationAddress),
+        ]);
+
+        let rentLamports = 0;
+
+        if (!minerAccount) {
+          rentLamports += await connection.getMinimumBalanceForRentExemption(
+            MINER_ACCOUNT_SIZE,
+          );
+        }
+
+        if (!automationAccount) {
+          rentLamports += await connection.getMinimumBalanceForRentExemption(
+            AUTOMATION_ACCOUNT_SIZE,
+          );
+        }
+
+        if (!cancelled) {
+          setSetupRentEstimateSol(rentLamports / LAMPORTS_PER_SOL);
+        }
+      } catch (err) {
+        console.warn('Error estimating setup rent for autominer:', err);
+        if (!cancelled) {
+          setSetupRentEstimateSol(0);
+        }
+      }
+    };
+
+    estimateRent();
+
+    return () => {
+      cancelled = true;
+    };
   }, [connected, publicKey, connection]);
 
   // Fetch ORE rewards (unrefined + refined) from on-chain Miner account via IDL
@@ -251,7 +360,24 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     }
   }, [connected, publicKey]);
 
-  // Poll session status while auto-mining in dev
+  const persistDevState = (wallet: string, burner: string | null, sess: AutoMineSession | null) => {
+    if (!import.meta.env.DEV) return;
+    const burnerKey = `automine:burner:${wallet}`;
+    const sessionKey = `automine:session:${wallet}`;
+    if (burner) {
+      window.localStorage.setItem(burnerKey, burner);
+    } else {
+      window.localStorage.removeItem(burnerKey);
+    }
+    if (sess) {
+      window.localStorage.setItem(sessionKey, JSON.stringify(sess));
+    } else {
+      window.localStorage.removeItem(sessionKey);
+    }
+  };
+
+  // Poll session status while auto-mining in dev (hidden from UI, but keeps
+  // backend state tidy during development)
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     if (!session || !autoMining) return;
@@ -303,14 +429,12 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     if (!burnerAddress) {
-      setBurnerBalance(null);
       return;
     }
     const fetchBalance = async () => {
       try {
         const burnerPubkey = new PublicKey(burnerAddress);
-        const lamports = await connection.getBalance(burnerPubkey, 'confirmed');
-        setBurnerBalance(lamports / LAMPORTS_PER_SOL);
+        await connection.getBalance(burnerPubkey, 'confirmed');
       } catch (err) {
         console.warn('Error fetching burner balance:', err);
       }
@@ -321,16 +445,6 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     return () => clearInterval(interval);
   }, [burnerAddress, connection]);
 
-  const incrementSol = (amount: number) => {
-    setSolAmount((prev) => {
-      const current = prev || 0;
-      const newAmount = Math.max(0, current + amount);
-      // Update input string to match
-      setSolAmountInput(newAmount.toString());
-      return newAmount;
-    });
-  };
-
   // Calculate totals (SOL per block × blocks × rounds)
   const totalPerRound = useMemo(() => {
     return (solAmount || 0) * actualBlocks;
@@ -340,11 +454,7 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     return totalPerRound * (rounds || 0);
   }, [totalPerRound, rounds]);
 
-  const selectedSquares = useMemo(() => {
-    return currentBlocks
-      .map((active, index) => (active ? index + 1 : null))
-      .filter((v): v is number => v !== null);
-  }, [currentBlocks]);
+  const configurationLocked = automationActive || automationSettling;
 
   const formatSolDisplay = (value: number): string => {
     if (!Number.isFinite(value) || value <= 0) return '0';
@@ -354,132 +464,8 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
 
   const minerBalanceSOL = minerBalance.toNumber() / LAMPORTS_PER_SOL;
 
-  const formatLamportsToSol = (lamports?: number): string => {
-    if (lamports === undefined || lamports === null) return '—';
-    const sol = lamports / LAMPORTS_PER_SOL;
-    return sol.toFixed(4);
-  };
-
-  const persistDevState = (wallet: string, burner: string | null, sess: AutoMineSession | null) => {
-    if (!import.meta.env.DEV) return;
-    const burnerKey = `automine:burner:${wallet}`;
-    const sessionKey = `automine:session:${wallet}`;
-    if (burner) {
-      window.localStorage.setItem(burnerKey, burner);
-    } else {
-      window.localStorage.removeItem(burnerKey);
-    }
-    if (sess) {
-      window.localStorage.setItem(sessionKey, JSON.stringify(sess));
-    } else {
-      window.localStorage.removeItem(sessionKey);
-    }
-  };
-
-  const handleStartAutoMiningDev = async () => {
-    if (!import.meta.env.DEV) return;
-    if (!connected || !publicKey) {
-      setError('Connect your wallet to start auto-mining.');
-      return;
-    }
-    if (solAmount <= 0 || rounds <= 0 || actualBlocks <= 0) {
-      setError('Enter a valid SOL amount and round count.');
-      return;
-    }
-
-    const wallet = publicKey.toBase58();
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-
-    try {
-      // Ensure the requested deployment amount does not exceed the main wallet balance.
-      const lamports = await connection.getBalance(publicKey, 'confirmed');
-      const walletSol = lamports / LAMPORTS_PER_SOL;
-      const requiredSol = total;
-
-      if (requiredSol > walletSol) {
-        setError(
-          `Not enough SOL in your wallet to deploy ${requiredSol.toFixed(
-            4,
-          )} SOL. Available balance: ${walletSol.toFixed(4)} SOL.`,
-        );
-        setLoading(false);
-        return;
-      }
-
-      // 1) Ensure Mining Wallet exists for this wallet on the backend.
-      // Always call /automine/burner so the bot's in-memory state is
-      // populated even after restarts, and so we pick up the canonical
-      // deterministic Mining Wallet address.
-      const burnerInfo = await createOrGetBurner(wallet);
-      const burner = burnerInfo.burnerAddress;
-      setBurnerAddress(burner);
-
-      // 2) Create a new session for this config
-      const newSession = await createAutoMineSession({
-        mainWallet: wallet,
-        solPerBlock: solAmount,
-        blocks: actualBlocks,
-        rounds,
-      });
-
-      // 3) Start the session
-      const started = await startAutoMineSession(newSession.sessionId);
-      setSession(started);
-      setAutoMining(started.status === 'running');
-      persistDevState(wallet, burner, started);
-
-      setSuccess(
-        'Dev auto-mining started via backend bot. Ensure your Mining Wallet has SOL for real transactions.',
-      );
-    } catch (err) {
-      console.error('Error starting dev auto-mining:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start auto-mining (dev).');
-      setAutoMining(false);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStopAutoMiningDev = async () => {
-    if (!import.meta.env.DEV) return;
-    if (!connected || !publicKey || !session) {
-      return;
-    }
-    const wallet = publicKey.toBase58();
-    setLoading(true);
-    setError(null);
-    try {
-      const stopped = await stopAutoMineSession(session.sessionId);
-      setSession(stopped);
-      setAutoMining(false);
-      persistDevState(wallet, burnerAddress, stopped);
-      setSuccess('Dev auto-mining stopped.');
-    } catch (err) {
-      console.error('Error stopping dev auto-mining:', err);
-
-      // If backend lost the session (e.g. restart), treat it as already
-      // stopped and clear local dev state instead of leaving a ghost
-      // session in the UI.
-      if (
-        err instanceof Error &&
-        (err.message.includes('404') || err.message.includes('Session not found'))
-      ) {
-        setSession(null);
-        setAutoMining(false);
-        persistDevState(wallet, burnerAddress, null);
-        setSuccess('Dev auto-mining session was already stopped.');
-        return;
-      }
-
-      setError(
-        err instanceof Error ? err.message : 'Failed to stop auto-mining (dev).',
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Dev-only backend helpers have been removed from the live UI; production
+  // autominer uses the main wallet with the official ORE executor.
 
   const handleClaimRewards = async () => {
     if (!connected || !publicKey || !signTransaction) {
@@ -578,8 +564,18 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
     try {
       // amountPerBlock is per-square bet in lamports
       const amountPerBlockLamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
-      const depositLamports =
+      const rawDepositLamports =
         amountPerBlockLamports * actualBlocks * (rounds || 0);
+
+      // Bake the one-time setup rent into the user's chosen deployment total by
+      // reducing the automation deposit. The on-chain transaction will still pay
+      // rent for new PDAs, but the effective deployed SOL will be approximately
+      // (requiredSol - rent), so the wallet sees ~requiredSol (+ network fees).
+      const estimatedRentLamports = Math.max(
+        0,
+        Math.floor(setupRentEstimateSol * LAMPORTS_PER_SOL),
+      );
+      const depositLamports = Math.max(rawDepositLamports - estimatedRentLamports, 0);
 
       await setupMiningAutomation(
         connection,
@@ -660,186 +656,191 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
 
   return (
     <div className="bg-[#21252C] border border-slate-700 rounded-lg p-3 mb-4 relative">
-      {/* SOL Input Section */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <SolanaLogo width={18} height={18} />
-            <span className="text-sm font-semibold text-slate-200">SOL</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              inputMode="decimal"
-              value={solAmountInput}
-              onChange={(e) => {
-                const val = e.target.value;
-                // Allow empty, just decimal point, or valid decimal numbers
-                if (val === '' || val === '.' || /^\d*\.?\d*$/.test(val)) {
-                  setSolAmountInput(val);
-                  // Update numeric value for calculations if valid
-                  const num = parseFloat(val);
-                  if (!isNaN(num) && num >= 0) {
-                    setSolAmount(num);
-                  } else if (val === '' || val === '.') {
-                    setSolAmount(0);
-                  }
-                }
-              }}
-              onBlur={(e) => { 
-                const val = e.target.value;
-                const num = parseFloat(val);
-                if (val === '' || isNaN(num) || num < 0) {
-                  // Reset to "empty" state and rely on placeholder to prompt input
-                  setSolAmount(0);
-                  setSolAmountInput('');
-                } else {
-                  // Format to remove trailing zeros but keep decimals
-                  const formatted = num.toString();
-                  setSolAmount(num);
-                  setSolAmountInput(formatted);
-                }
-              }}
-              onFocus={(e) => {
-                // Select all on focus for easy editing
-                e.target.select();
-              }}
-              placeholder="0.001"
-              readOnly={false}
-              disabled={disabled || loading}
-              className="w-24 bg-transparent text-base font-semibold text-slate-200 placeholder:text-slate-500 outline-none text-right border-none focus:text-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Blocks Input Section */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <svg
-              className="w-4 h-4 text-slate-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
-              />
-            </svg>
-            <span className="text-sm font-semibold text-slate-200">Blocks</span>
-          </div>
-          <input
-            type="number"
-            min={1}
-            max={25}
-            value={blocks === 0 ? '' : blocks}
-            readOnly
-            disabled
-            className="w-24 bg-transparent text-base font-semibold text-slate-200 placeholder:text-slate-500 outline-none text-right border-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none opacity-60 cursor-not-allowed"
-          />
-        </div>
-      </div>
-
-      {/* Rounds Input Section */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <svg
-              className="w-4 h-4 text-slate-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-            <span className="text-sm font-semibold text-slate-200">Rounds</span>
-          </div>
-          <input
-            type="number"
-            min={1}
-            value={rounds === 0 ? '' : rounds}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === '') {
-                setRounds(0);
-              } else {
-                const num = parseInt(val, 10);
-                if (!isNaN(num) && num >= 1) {
-                  setRounds(num);
-                }
-              }
-            }}
-            onBlur={(e) => { 
-              if (e.target.value === '' || parseInt(e.target.value, 10) < 1) {
-                setRounds(1);
-              }
-            }}
-            placeholder="1"
-            readOnly={false}
-            disabled={disabled || loading}
-            className="w-24 bg-transparent text-base font-semibold text-slate-200 placeholder:text-slate-500 outline-none text-right border-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:text-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-          />
-        </div>
-      </div>
-
-      {/* Risk Profile Section */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <svg
-              className="w-4 h-4 text-slate-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"
-              />
-            </svg>
-            <span className="text-sm font-semibold text-slate-200">Risk profile</span>
-          </div>
-          <div className="relative">
-            <select
-              value="all25"
-              disabled={true}
-              className="w-32 bg-transparent border-none text-base font-semibold text-slate-200 outline-none appearance-none disabled:opacity-60 disabled:cursor-not-allowed pr-6 text-right"
-            >
-              <option value="all25">All 25 Blocks</option>
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center text-slate-400 opacity-60">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
+      {/* Configuration inputs - hide while automation is running OR last round is settling */}
+      {!configurationLocked && (
+        <>
+          {/* SOL Input Section */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <SolanaLogo width={18} height={18} />
+                <span className="text-sm font-semibold text-slate-200">SOL</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={solAmountInput}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    // Allow empty, just decimal point, or valid decimal numbers
+                    if (val === '' || val === '.' || /^\d*\.?\d*$/.test(val)) {
+                      setSolAmountInput(val);
+                      // Update numeric value for calculations if valid
+                      const num = parseFloat(val);
+                      if (!isNaN(num) && num >= 0) {
+                        setSolAmount(num);
+                      } else if (val === '' || val === '.') {
+                        setSolAmount(0);
+                      }
+                    }
+                  }}
+                  onBlur={(e) => { 
+                    const val = e.target.value;
+                    const num = parseFloat(val);
+                    if (val === '' || isNaN(num) || num < 0) {
+                      // Reset to "empty" state and rely on placeholder to prompt input
+                      setSolAmount(0);
+                      setSolAmountInput('');
+                    } else {
+                      // Format to remove trailing zeros but keep decimals
+                      const formatted = num.toString();
+                      setSolAmount(num);
+                      setSolAmountInput(formatted);
+                    }
+                  }}
+                  onFocus={(e) => {
+                    // Select all on focus for easy editing
+                    e.target.select();
+                  }}
+                  placeholder="0.001"
+                  readOnly={false}
+                  disabled={disabled || loading}
+                  className="w-24 bg-transparent text-base font-semibold text-slate-200 placeholder:text-slate-500 outline-none text-right border-none focus:text-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+
+          {/* Blocks Input Section */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg
+                  className="w-4 h-4 text-slate-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
+                  />
+                </svg>
+                <span className="text-sm font-semibold text-slate-200">Blocks</span>
+              </div>
+              <input
+                type="number"
+                min={1}
+                max={25}
+                value={blocks === 0 ? '' : blocks}
+                readOnly
+                disabled
+                className="w-24 bg-transparent text-base font-semibold text-slate-200 placeholder:text-slate-500 outline-none text-right border-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none opacity-60 cursor-not-allowed"
+              />
+            </div>
+          </div>
+
+          {/* Rounds Input Section */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg
+                  className="w-4 h-4 text-slate-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                <span className="text-sm font-semibold text-slate-200">Rounds</span>
+              </div>
+              <input
+                type="number"
+                min={1}
+                value={rounds === 0 ? '' : rounds}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '') {
+                    setRounds(0);
+                  } else {
+                    const num = parseInt(val, 10);
+                    if (!isNaN(num) && num >= 1) {
+                      setRounds(num);
+                    }
+                  }
+                }}
+                onBlur={(e) => { 
+                  if (e.target.value === '' || parseInt(e.target.value, 10) < 1) {
+                    setRounds(1);
+                  }
+                }}
+                placeholder="1"
+                readOnly={false}
+                disabled={disabled || loading}
+                className="w-24 bg-transparent text-base font-semibold text-slate-200 placeholder:text-slate-500 outline-none text-right border-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:text-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </div>
+          </div>
+
+          {/* Risk Profile Section */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg
+                  className="w-4 h-4 text-slate-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"
+                  />
+                </svg>
+                <span className="text-sm font-semibold text-slate-200">Risk profile</span>
+              </div>
+              <div className="relative">
+                <select
+                  value="all25"
+                  disabled={true}
+                  className="w-32 bg-transparent border-none text-base font-semibold text-slate-200 outline-none appearance-none disabled:opacity-60 disabled:cursor-not-allowed pr-6 text-right"
+                >
+                  <option value="all25">All 25 Blocks</option>
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center text-slate-400 opacity-60">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Totals / Autominer summary */}
-      <div className="mb-3 space-y-1.5">
+      <div className="mb-3">
         {automationActive ? (
           <>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-400">Rounds remaining</span>
-              <span className="text-xs font-semibold text-slate-200">
+              <span className="text-sm font-semibold text-slate-200">Rounds remaining</span>
+              <span className="text-sm font-semibold text-slate-200">
                 {automationRoundsRemaining}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-400">Total per round</span>
-              <span className="text-xs font-semibold text-slate-200">
+              <span className="text-sm font-semibold text-slate-200">Total per round</span>
+              <span className="text-sm font-semibold text-slate-200">
                 {automationTotalPerRoundSol.toFixed(4)} SOL
               </span>
             </div>
@@ -847,14 +848,14 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
         ) : (
           <>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-400">Total per round</span>
-              <span className="text-xs font-semibold text-slate-200">
+              <span className="text-sm font-semibold text-slate-200">Total per round</span>
+              <span className="text-sm font-semibold text-slate-200">
                 {totalPerRound % 1 === 0 ? totalPerRound.toFixed(0) : totalPerRound.toFixed(4)} SOL
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-400">Total ({rounds} rounds)</span>
-              <span className="text-xs font-semibold text-slate-200">
+              <span className="text-sm font-semibold text-slate-200">Total ({rounds} rounds)</span>
+              <span className="text-sm font-semibold text-slate-200">
                 {total % 1 === 0 ? total.toFixed(0) : total.toFixed(4)} SOL
               </span>
             </div>
@@ -862,89 +863,10 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
         )}
       </div>
 
-      {/* Dev-only session details (temporarily hidden to focus on on-chain autominer) */}
-      {false && import.meta.env.DEV && session && (
-        <div className="mb-3 p-2 bg-slate-900/50 rounded border border-blue-700 text-[11px] text-slate-300">
-          <div className="flex items-center justify-between mb-1">
-            <span className="font-semibold text-slate-200">Dev auto-miner session</span>
-            <span className="text-xs text-slate-400">
-              Status:{' '}
-              <span
-                className={`font-semibold ${
-                  session.status === 'running'
-                    ? 'text-green-400'
-                    : session.status === 'error'
-                    ? 'text-red-400'
-                    : 'text-slate-200'
-                }`}
-              >
-                {session.status}
-              </span>
-            </span>
-        </div>
-          <div className="grid grid-cols-2 gap-1 text-[10px] mt-1">
-          <div className="flex items-center justify-between">
-              <span>Rounds</span>
-              <span className="font-semibold text-slate-200">
-                {session.roundsCompleted ?? 0} / {rounds}
-            </span>
-          </div>
-              <div className="flex items-center justify-between">
-              <span>Remaining SOL</span>
-              <span className="font-semibold text-slate-200">
-                {formatLamportsToSol(session.remainingSolLamports)}
-              </span>
-              </div>
-              <div className="flex items-center justify-between">
-              <span>Deployed SOL</span>
-              <span className="font-semibold text-slate-200">
-                {formatLamportsToSol(session.totalDeployedLamports)}
-                </span>
-              </div>
-                <div className="flex items-center justify-between">
-              <span>Last round</span>
-              <span className="font-semibold text-slate-200">
-                {session.lastRoundId !== undefined ? `#${session.lastRoundId}` : '—'}
-              </span>
-                </div>
-          </div>
-          <div className="mt-1 text-[10px] text-slate-400">
-                <div className="flex items-center justify-between">
-              <span>Per-block this round</span>
-              <span className="font-semibold text-slate-200">
-                {solAmount.toFixed(4)} SOL × {actualBlocks} blocks ={' '}
-                {totalPerRound.toFixed(4)} SOL
-              </span>
-                </div>
-            <div className="mt-1 flex items-start gap-1">
-              <span>Squares this round:</span>
-              <span className="font-mono text-slate-200">
-                {selectedSquares.length
-                  ? selectedSquares.join(', ')
-                  : '—'}
-              </span>
-          </div>
-            {session.lastTxSig && (
-              <div className="mt-1">
-                <span className="mr-1">Last tx:</span>
-              <a
-                  href={`https://solscan.io/tx/${session.lastTxSig}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                  className="text-[10px] text-blue-400 hover:text-blue-300 underline"
-              >
-                  {session.lastTxSig.slice(0, 8)}...
-              </a>
-            </div>
-          )}
-              </div>
-        </div>
-      )}
-
       {/* Rewards summary (SOL + ORE) */}
       <div className="mb-3 mt-2 border border-slate-700 rounded-lg p-3 bg-slate-900/40">
         <h3 className="text-sm font-semibold text-slate-100 mb-2">Rewards</h3>
-        <div className="space-y-1.5 text-xs">
+        <div className="space-y-2 text-sm">
           <div className="flex items-center justify-between">
             <span className="text-slate-400 flex items-center gap-1">
               <SolanaLogo width={12} />
@@ -953,20 +875,20 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
             <span className="font-semibold text-slate-100">
               {minerBalanceSOL.toFixed(6)}
             </span>
-              </div>
+          </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-400 flex items-center gap-1">
               <img
                 src="/orelogo.jpg"
                 alt="ORE"
                 className="w-3 h-3 object-contain rounded"
-                />
+              />
               <span>Unrefined ORE</span>
             </span>
             <span className="font-semibold text-slate-100">
               {unrefinedOre !== null ? unrefinedOre.toFixed(8) : '—'}
             </span>
-              </div>
+          </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-400 flex items-center gap-1">
               <img
@@ -979,8 +901,8 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
             <span className="font-semibold text-slate-100">
               {refinedOre !== null ? refinedOre.toFixed(8) : '—'}
             </span>
-                </div>
-            </div>
+          </div>
+        </div>
         <div className="mt-3 flex flex-col gap-2">
               <button
             type="button"
@@ -1119,38 +1041,36 @@ export function AutoMinePanel({ disabled = false }: AutoMinePanelProps) {
       <div className="space-y-2">
         <button
           type="button"
-          onClick={automationActive ? handleStopAutomation : handleSetupAutomation}
+          onClick={
+            automationActive
+              ? handleStopAutomation
+              : automationSettling
+              ? undefined
+              : handleSetupAutomation
+          }
           disabled={
             disabled ||
             loading ||
             !connected ||
+            automationSettling ||
             (automationActive ? false : total <= 0)
           }
           className="w-full py-2 bg-white text-black hover:bg-gray-100 disabled:bg-slate-800 disabled:text-slate-400 disabled:cursor-not-allowed text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
+          <SolanaLogo width={16} height={16} />
           <span>
             {loading
               ? automationActive
                 ? 'Stopping automation...'
+                : automationSettling
+                ? 'Waiting for settlement...'
                 : 'Configuring automation...'
               : automationActive
               ? 'Stop autominer'
+              : automationSettling
+              ? 'Finishing current round...'
               : total > 0
-              ? `Automate ${formatSolDisplay(total)} SOL`
+              ? `Deploy ${formatSolDisplay(total)} SOL`
               : 'Enter SOL & rounds'}
           </span>
         </button>

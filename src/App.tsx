@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { getState, getBids } from './services/api';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
 import BN from 'bn.js';
 import { minerPDA } from './solana/oreSDK';
 import type { StateResponse, BidsResponse } from './types/api';
@@ -159,13 +158,8 @@ function AppContent() {
       // skip rewards_factor (Numeric bits[16])
       offset += 16;
 
-      // rewards_sol, rewards_ore, refined_ore
-      const rewardsSolBN = new BN(data.slice(offset, offset + 8), 'le');
-      offset += 8;
-      const rewardsOreBN = new BN(data.slice(offset, offset + 8), 'le');
-      offset += 8;
-      const refinedOreBN = new BN(data.slice(offset, offset + 8), 'le');
-      offset += 8;
+      // rewards_sol, rewards_ore, refined_ore (skip – not needed for UI)
+      offset += 8 * 3;
 
       // round_id
       const roundIdBN = new BN(data.slice(offset, offset + 8), 'le');

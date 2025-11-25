@@ -190,7 +190,7 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
         setSolBalance(null);
         setSolBalanceLoading(false);
       });
-
+    
     // Fetch ORE balances in parallel (can take longer, update when ready)
     setOreBalancesLoading(true);
     try {
@@ -257,15 +257,15 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
         } catch (fallbackErr) {
           console.error('Fallback miner stats for ORE balances also failed:', fallbackErr);
           // Final fallback: show zeros but stop the spinner
-          setOreBalances({
-            wallet: '0',
-            staked: '0',
-            refined: '0',
-            unrefined: '0',
-            total: '0',
-          });
+        setOreBalances({
+          wallet: '0',
+          staked: '0',
+          refined: '0',
+          unrefined: '0',
+          total: '0',
+        });
         } finally {
-          setOreBalancesLoading(false);
+        setOreBalancesLoading(false);
         }
       });
   };
@@ -281,9 +281,11 @@ export function WalletMenu({ isOpen, onClose, solPrice, orePrice }: WalletMenuPr
   const formatOreBalance = (balance: string | null | undefined) => {
     if (!balance || balance === '0' || balance === '') return '0';
     const num = parseFloat(balance);
-    if (isNaN(num)) return '0';
-    // Format to 2 decimal places, but remove trailing zeros
-    return num.toFixed(2).replace(/\.?0+$/, '');
+    if (isNaN(num) || num === 0) return '0';
+    // For small balances, show more precision so they don't appear as "0"
+    const fixed =
+      Math.abs(num) < 1 ? num.toFixed(6) : num.toFixed(2);
+    return fixed.replace(/\.?0+$/, '');
   };
 
   // Calculate total ORE accounting for 10% fee on unrefined when claiming

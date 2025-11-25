@@ -71,11 +71,11 @@ export async function getCurrentRound(
           // "Provided seeds do not result in a valid address".
           const existsOnChain = await checkRoundStatus(connection, roundIdBN);
           if (existsOnChain) {
-            return {
+          return {
               roundId: roundIdBN,
-              isActive: true,
-              canDeploy: true,
-            };
+            isActive: true,
+            canDeploy: true,
+          };
           }
 
           console.warn(
@@ -668,7 +668,7 @@ export async function getAutomationInfo(
       return null;
     }
     const data = automationAccount.data;
-
+    
     // Parse automation account data according to IDL:
     // struct Automation {
     //   amount: u64,
@@ -696,7 +696,7 @@ export async function getAutomationInfo(
 
     const deposit = balance;
     const strategy = strategyBN.toNumber();
-
+    
     return {
       exists: true,
       amount,

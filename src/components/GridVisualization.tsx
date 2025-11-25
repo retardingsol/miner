@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import type { RoundPerSquare, StateResponse, BidsResponse } from '../types/api';
 import { SolanaLogo } from './SolanaLogo';
 import { AutoMinePanel } from './AutoMinePanel';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 // Tooltip component that follows the mouse
 function MouseTooltip({ children, content, enabled = true }: { children: React.ReactNode; content: React.ReactNode; enabled?: boolean }) {
@@ -184,19 +183,10 @@ interface GridVisualizationProps {
   walletAddress?: string | null;
 }
 
-interface PriceCostDataPoint {
-  roundId: string;
-  timestamp: number;
-  marketPrice: number;
-  productionCost: number;
-  date: Date;
-}
-
 export function GridVisualization({ perSquare, winningSquareIndex, countdown, uniqueMiners, totalBids, roundId, state, roundResult, roundStatus, selectedSquare, currentBet, martingaleStats, userBets, roundResults, walletAddress }: GridVisualizationProps) {
   const [barWidths, setBarWidths] = useState<number[]>(Array(25).fill(0));
   const [barColors, setBarColors] = useState<string[]>(Array(25).fill('bg-slate-500'));
   const [tooltipsEnabled, setTooltipsEnabled] = useState(true);
-  const [historicalData, setHistoricalData] = useState<PriceCostDataPoint[]>([]);
 
   const winningMiners = useMemo(() => {
     const list: {
@@ -309,90 +299,14 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
 
   // Calculate summary card values
   const motherlodeOre = state?.treasury?.motherlodeFormatted || '0';
-  const orePrice = state?.orePrice ? parseFloat(state.orePrice.priceUsdRaw) : 0;
   const solPrice = state?.solPrice ? parseFloat(state.solPrice.priceUsdRaw) : 0;
   
   const motherlodeAmount = parseFloat(motherlodeOre.replace(/[^\d.]/g, '')) || 0;
-  const motherlodeUsd = motherlodeAmount * orePrice;
   
   const totalDeployedSol = state?.round?.totals.deployedSol 
     ? parseFloat(state.round.totals.deployedSol) 
     : 0;
   const totalDeployedUsd = totalDeployedSol * solPrice;
-  
-  const acquisitionCostRate = 0.11;
-  const oreMinedPerRound = 1.2;
-  
-  const productionCostSol = totalDeployedSol > 0
-    ? (totalDeployedSol * acquisitionCostRate) / oreMinedPerRound
-    : 0;
-  const productionCostUsd = productionCostSol * solPrice;
-
-  // Store historical data for chart
-      useEffect(() => {
-        if (!state?.round?.roundId || !state?.orePrice || !state?.solPrice || totalDeployedSol === 0) {
-          return;
-        }
-
-        const currentRoundId = state.round.roundId;
-        const marketPriceUsd = parseFloat(state.orePrice.priceUsdRaw || '0');
-        const solPriceUsd = parseFloat(state.solPrice.priceUsdRaw || '0');
-        const currentProductionCostUsd = productionCostUsd;
-        const roundObservedAt = state.round?.observedAt;
-
-        // Only add if we have valid data and it's a new round
-        if (marketPriceUsd > 0 && solPriceUsd > 0 && currentProductionCostUsd > 0 && roundObservedAt) {
-          setHistoricalData(prevData => {
-            // Check if this round already exists
-            const existingIndex = prevData.findIndex(d => d.roundId === currentRoundId);
-            
-            if (existingIndex >= 0) {
-              // Update existing entry
-              const newData = [...prevData];
-              newData[existingIndex] = {
-                roundId: currentRoundId,
-                timestamp: new Date(roundObservedAt).getTime(),
-                marketPrice: marketPriceUsd,
-                productionCost: currentProductionCostUsd,
-                date: new Date(roundObservedAt),
-              };
-              return newData;
-            } else {
-              // Add new entry
-              const newEntry: PriceCostDataPoint = {
-                roundId: currentRoundId,
-                timestamp: new Date(roundObservedAt).getTime(),
-                marketPrice: marketPriceUsd,
-                productionCost: currentProductionCostUsd,
-                date: new Date(roundObservedAt),
-              };
-          
-          // Keep only last 1000 data points to avoid memory issues
-          const updatedData = [...prevData, newEntry].slice(-1000);
-          
-          // Sort by timestamp
-          return updatedData.sort((a, b) => a.timestamp - b.timestamp);
-        }
-      });
-    }
-  }, [state?.round?.roundId, state?.orePrice?.priceUsdRaw, state?.solPrice?.priceUsdRaw, totalDeployedSol, productionCostUsd]);
-
-  // EV Calc - Breakeven price calculation
-  const breakevenPriceSol = totalDeployedSol > 0 && motherlodeAmount > 0
-    ? (0.1 * totalDeployedSol) / (1 + motherlodeAmount / 625)
-    : 0;
-  const breakevenPriceUsd = breakevenPriceSol * solPrice;
-  
-  // Market price in SOL (convert from USD)
-  const marketPriceSol = orePrice > 0 && solPrice > 0 ? orePrice / solPrice : 0;
-  const marketPriceUsd = orePrice;
-  
-  // Expected Value calculation: ((Market Price - Breakeven Price) / Breakeven Price) * 100
-  const expectedValue = breakevenPriceSol > 0
-    ? ((marketPriceSol - breakevenPriceSol) / breakevenPriceSol) * 100
-    : 0;
-  
-  const isNegativeEV = expectedValue < 0;
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -550,18 +464,84 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                       </div>
 
                       {/* Animated indicator bar at bottom */}
-                      <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-700/50 rounded-b-lg overflow-hidden">
-                        <div
-                          className={`h-full ${barColors[index]} transition-all duration-1000 ease-out`}
-                          style={{
-                            width: `${barWidths[index]}%`,
-                          }}
-                        />
-                      </div>
+                      {tooltipsEnabled && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-700/50 rounded-b-lg overflow-hidden">
+                          <div
+                            className={`h-full ${barColors[index]} transition-all duration-1000 ease-out`}
+                            style={{
+                              width: `${barWidths[index]}%`,
+                            }}
+                          />
+                        </div>
+                      )}
                     </div>
                   </MouseTooltip>
                 );
             })}
+          </div>
+
+          {/* Color Coding Help Icon and Tooltip Toggle - below grid */}
+          <div className="flex items-center justify-center gap-3 mt-6">
+            <div className="relative group">
+              <MouseTooltip
+                enabled={tooltipsEnabled}
+                content={
+                  <>
+                    <p className="text-xs text-slate-300 mb-2 font-semibold">Color Coding:</p>
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-start gap-2">
+                        <div className="w-3 h-3 bg-green-500 rounded mt-0.5 flex-shrink-0" />
+                        <span className="text-slate-300">Above average activity</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <div className="w-3 h-3 bg-yellow-500 rounded mt-0.5 flex-shrink-0" />
+                        <span className="text-slate-300">Near average activity (within 0.5 std dev)</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <div className="w-3 h-3 bg-red-500 rounded mt-0.5 flex-shrink-0" />
+                        <span className="text-slate-300">Below average activity</span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-3 leading-relaxed">
+                      The indicator bar at the bottom of each square shows the relative activity level compared to the average across all squares.
+                    </p>
+                  </>
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => {}} // Always clickable, shows tooltip when enabled
+                  className="flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors cursor-pointer"
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path
+                      fillRule="evenodd"
+                      d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  <span className="text-xs text-slate-400">Color coding</span>
+                </button>
+              </MouseTooltip>
+            </div>
+
+            {/* Tooltip Toggle Switch */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400">Tooltips</span>
+              <button
+                onClick={() => setTooltipsEnabled(!tooltipsEnabled)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 ${
+                  tooltipsEnabled ? 'bg-green-600' : 'bg-slate-600'
+                }`}
+                aria-label="Toggle tooltips"
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    tooltipsEnabled ? 'translate-x-5' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -654,7 +634,6 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
                     {motherlodeAmount.toFixed(1)}
                   </span>
                 </div>
-                <p className="text-[10px] sm:text-xs text-slate-400 mt-1">{formatCurrency(motherlodeUsd)}</p>
               </div>
             </MouseTooltip>
 
@@ -942,237 +921,9 @@ export function GridVisualization({ perSquare, winningSquareIndex, countdown, un
             </div>
           ) : null}
 
-          {/* Market Price vs Production Cost Chart - Hidden for now */}
-          {false && (
-            <div className="bg-[#21252C] rounded-lg p-6 border border-slate-700 mt-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-slate-100">Market Price vs Production Cost Over Time</h3>
-                <div className="flex items-center gap-4 text-xs text-slate-400">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-blue-400" />
-                    <span>Market Price</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-red-500" />
-                    <span>Production Cost</span>
-                  </div>
-                </div>
-              </div>
-              
-              {historicalData.length > 0 ? (
-                <PriceCostChart data={historicalData} />
-              ) : (
-                <div className="flex items-center justify-center h-80 text-slate-400">
-                  <p>Collecting data... Chart will appear as more rounds complete.</p>
-                </div>
-              )}
-            </div>
-          )}
-          </div>
-          
-          {/* Color Coding Help Icon and Tooltip Toggle - Bottom of right side */}
-          <div className="flex items-center justify-center gap-3 pt-4 mt-auto">
-            <div className="relative group">
-              <MouseTooltip
-                enabled={tooltipsEnabled}
-                content={
-                  <>
-                    <p className="text-xs text-slate-300 mb-2 font-semibold">Color Coding:</p>
-                    <div className="space-y-1.5 text-xs">
-                      <div className="flex items-start gap-2">
-                        <div className="w-3 h-3 bg-green-500 rounded mt-0.5 flex-shrink-0" />
-                        <span className="text-slate-300">Above average activity</span>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <div className="w-3 h-3 bg-yellow-500 rounded mt-0.5 flex-shrink-0" />
-                        <span className="text-slate-300">Near average activity (within 0.5 std dev)</span>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <div className="w-3 h-3 bg-red-500 rounded mt-0.5 flex-shrink-0" />
-                        <span className="text-slate-300">Below average activity</span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-3 leading-relaxed">
-                      The indicator bar at the bottom of each square shows the relative activity level compared to the average across all squares.
-                    </p>
-                  </>
-                }
-              >
-                <button
-                  type="button"
-                  onClick={() => {}} // Always clickable, shows tooltip when enabled
-                  className={`flex items-center gap-1.5 text-slate-400 hover:text-slate-300 transition-colors cursor-pointer ${tooltipsEnabled ? '' : ''}`}
-                >
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-                  </svg>
-                  <span className="text-xs text-slate-400">Color Coding</span>
-                </button>
-              </MouseTooltip>
-            </div>
-            
-            {/* Tooltip Toggle Switch */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400">Tooltips</span>
-              <button
-                onClick={() => setTooltipsEnabled(!tooltipsEnabled)}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 ${
-                  tooltipsEnabled ? 'bg-green-600' : 'bg-slate-600'
-                }`}
-                aria-label="Toggle tooltips"
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    tooltipsEnabled ? 'translate-x-5' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
           </div>
         </div>
       </div>
     </div>
-  );
-}
-
-// Price vs Production Cost Chart Component
-function PriceCostChart({ data }: { data: PriceCostDataPoint[] }) {
-  // Calculate 7-day moving averages for smoothing
-  const smoothedData = useMemo(() => {
-    if (data.length === 0) return [];
-    
-    const windowSize = 7; // 7-day moving average (adjust based on data frequency)
-    const actualWindowSize = Math.min(windowSize, Math.max(1, Math.floor(data.length / 10)));
-    
-    return data.map((point, index) => {
-      const start = Math.max(0, index - actualWindowSize);
-      const end = Math.min(data.length, index + actualWindowSize + 1);
-      const window = data.slice(start, end);
-      
-      const avgMarketPrice = window.reduce((sum, p) => sum + p.marketPrice, 0) / window.length;
-      const avgProductionCost = window.reduce((sum, p) => sum + p.productionCost, 0) / window.length;
-      
-      return {
-        roundId: point.roundId,
-        timestamp: point.timestamp,
-        date: point.date,
-        marketPrice: avgMarketPrice,
-        productionCost: avgProductionCost,
-        rawMarketPrice: point.marketPrice,
-        rawProductionCost: point.productionCost,
-      };
-    });
-  }, [data]);
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 4,
-    }).format(value);
-  };
-
-  const formatRoundId = (roundId: string) => {
-    return `#${roundId}`;
-  };
-
-  // Prepare chart data
-  const chartData = smoothedData.map((point) => ({
-    roundId: point.roundId,
-    roundLabel: formatRoundId(point.roundId),
-    marketPrice: point.marketPrice,
-    productionCost: point.productionCost,
-    // For area chart: positive when market > cost (overvalued), negative when market < cost (undervalued)
-    difference: point.marketPrice - point.productionCost,
-    date: point.date,
-  }));
-
-  // Calculate Y-axis domain - dynamic based on data
-  const allValues = [...chartData.map(d => d.marketPrice), ...chartData.map(d => d.productionCost)];
-  const maxValue = Math.max(...allValues, 100);
-  const yAxisMax = Math.ceil(maxValue / 200) * 200; // Round up to nearest 200
-  const yAxisMin = 0;
-
-  // Generate Y-axis ticks
-  const yAxisTicks: number[] = [];
-  for (let i = yAxisMin; i <= yAxisMax; i += 200) {
-    yAxisTicks.push(i);
-  }
-
-  return (
-    <ResponsiveContainer width="100%" height={400}>
-      <LineChart
-        data={chartData}
-        margin={{ top: 10, right: 30, left: 0, bottom: 60 }}
-      >
-        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-        <XAxis
-          dataKey="roundLabel"
-          stroke="#94a3b8"
-          angle={-45}
-          textAnchor="end"
-          height={80}
-          tick={{ fill: '#94a3b8', fontSize: 10 }}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          stroke="#94a3b8"
-          tick={{ fill: '#94a3b8', fontSize: 11 }}
-          label={{ value: 'Price (USD)', angle: -90, position: 'insideLeft', fill: '#94a3b8', style: { fontSize: '12px' } }}
-          domain={[yAxisMin, yAxisMax]}
-          ticks={yAxisTicks}
-          tickFormatter={(value) => `$${value.toFixed(0)}`}
-        />
-        <Tooltip
-          contentStyle={{
-            backgroundColor: '#1e293b',
-            border: '1px solid #475569',
-            borderRadius: '8px',
-            color: '#f1f5f9',
-          }}
-          labelStyle={{ color: '#94a3b8', marginBottom: '8px', fontSize: '12px' }}
-          formatter={(value: number, name: string) => {
-            if (name === 'marketPrice') return [formatCurrency(value), 'Market Price'];
-            if (name === 'productionCost') return [formatCurrency(value), 'Production Cost'];
-            return [value, name];
-          }}
-          labelFormatter={(label) => `Round: ${label}`}
-        />
-        <Legend
-          wrapperStyle={{ paddingTop: '20px' }}
-          iconType="circle"
-          formatter={(value) => {
-            if (value === 'marketPrice') return 'Market Price';
-            if (value === 'productionCost') return 'Production Cost';
-            return value;
-          }}
-        />
-        {/* Market Price Line */}
-        <Line
-          type="monotone"
-          dataKey="marketPrice"
-          stroke="#60a5fa"
-          strokeWidth={2}
-          dot={false}
-          activeDot={{ r: 4, fill: '#60a5fa', stroke: '#3b82f6', strokeWidth: 2 }}
-          name="marketPrice"
-          isAnimationActive={false}
-          animationDuration={0}
-        />
-        {/* Production Cost Line */}
-        <Line
-          type="monotone"
-          dataKey="productionCost"
-          stroke="#ef4444"
-          strokeWidth={2}
-          dot={false}
-          activeDot={{ r: 4, fill: '#ef4444', stroke: '#dc2626', strokeWidth: 2 }}
-          name="productionCost"
-          isAnimationActive={false}
-          animationDuration={0}
-        />
-      </LineChart>
-    </ResponsiveContainer>
   );
 }
