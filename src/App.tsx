@@ -16,6 +16,7 @@ import { WhatIsOreView } from './components/WhatIsOreView';
 import { AboutView } from './components/AboutView';
 import { MinersView } from './components/MinersView';
 import { DustToOreView } from './components/DustToOreView';
+import { ExploreView } from './components/ExploreView';
 
 const LAMPORTS_PER_SOL = 1e9;
 const ORE_CONVERSION_FACTOR = 1e11;
@@ -26,7 +27,7 @@ const POLL_INTERVAL = 3000; // 3 seconds for state (20 requests/min - well under
 const BIDS_POLL_INTERVAL = 12000; // 12 seconds for bids (5 requests/min - minimal load)
 const BIDS_OFFSET = 1500; // 1.5s offset from state polling to avoid hitting 5/sec limit
 
-type View = 'dashboard' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore' | 'miners' | 'dust-to-ore';
+type View = 'dashboard' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore' | 'miners' | 'dust-to-ore' | 'explore';
 
 // Main content component that uses routing
 function AppContent() {
@@ -372,6 +373,7 @@ function AppContent() {
     if (path === '/liquidity') return 'liquidity';
     if (path === '/unrefined') return 'unrefined';
     if (path === '/miners') return 'miners';
+    if (path === '/explore') return 'explore';
     return 'dashboard';
   };
 
@@ -424,6 +426,7 @@ function AppContent() {
           <Route path="/martingale" element={<MartingaleSimulationView />} />
           <Route path="/what-is-ore" element={<WhatIsOreView />} />
           <Route path="/dust-to-ore" element={<DustToOreView />} />
+          <Route path="/explore" element={<ExploreView />} />
           <Route path="/" element={
             <div className="py-8 px-4">
               <div className="max-w-7xl mx-auto">

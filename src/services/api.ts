@@ -136,6 +136,30 @@ export async function getState(): Promise<StateResponse> {
 }
 
 /**
+ * Fetches the raw state frames from the ORE API (used for historical round data)
+ */
+export async function getStateFrames(): Promise<any[]> {
+  const apiUrl = import.meta.env.DEV
+    ? '/api/ore-v2/state'
+    : '/api/ore-api/v2/state';
+
+  const response = await fetchWithRetry(apiUrl);
+
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error('Rate limited. Please wait a moment and try again.');
+    }
+    throw new Error(`Failed to fetch state frames: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  if (!Array.isArray(data.frames)) {
+    return [];
+  }
+  return data.frames;
+}
+
+/**
  * Fetches sorted list of miner deployments for the active round
  */
 export async function getBids(): Promise<BidsResponse> {

@@ -21,7 +21,7 @@ declare global {
   }
 }
 
-type View = 'dashboard' | 'mines' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore' | 'miners' | 'dust-to-ore';
+type View = 'dashboard' | 'mines' | 'about' | 'treasury' | 'leaderboard' | 'strategies' | 'merch' | 'inflation' | 'token' | 'revenue' | 'martingale' | 'staking' | 'liquidity' | 'unrefined' | 'what-is-ore' | 'miners' | 'dust-to-ore' | 'explore';
 
 // Custom wallet connect button that shows "Connect" when disconnected
 function WalletConnectButtonCustom({ onWalletClick, onMobileWalletClick }: { onWalletClick?: () => void; onMobileWalletClick?: () => void }) {
@@ -155,6 +155,7 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
     if (path === '/miners') return 'miners';
     if (path === '/what-is-ore') return 'what-is-ore';
     if (path === '/dust-to-ore') return 'dust-to-ore';
+    if (path === '/explore') return 'explore';
     return 'dashboard';
   };
 
@@ -316,6 +317,17 @@ export function Header({ solPrice, orePrice, currentView = 'dashboard', walletMe
               >
                 <img src="/orelogo.jpg" alt="ORE" className="w-4 h-4 object-contain rounded" />
                 Mines
+              </Link>
+              <Link
+                to="/explore"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                  activeView === 'explore'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <SolanaLogo width={16} />
+                Explore
               </Link>
               <Link
                 to="/about"
